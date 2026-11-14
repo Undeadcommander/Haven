@@ -55,8 +55,29 @@ export function setupAccount(api) {
   function update() {
     if (sync.status === "deleting") ready = false;
     document.querySelectorAll("[data-account]").forEach((b) => {
-      b.textContent = user ? "Account" : "Sign in";
-      b.title = user ? "Manage your account" : "Sign up or sign in with Google";
+      b.hidden = !!user;
+    });
+    document.querySelectorAll("[data-account-avatar]").forEach((button) => {
+      button.hidden = !user;
+      button.closest(".header-right")?.classList.toggle("account-signed-in", !!user);
+      let photoUrl = "";
+      try {
+        const url = new URL(user?.photoURL);
+        if (url.protocol === "https:") photoUrl = url.href;
+      } catch {}
+      if ((button.dataset.photo || "") === photoUrl) return;
+      button.dataset.photo = photoUrl;
+      button.textContent = "H";
+      if (photoUrl) {
+        const image = document.createElement("img");
+        image.alt = "";
+        image.referrerPolicy = "no-referrer";
+        image.onerror = () => {
+          if (image.parentNode === button) button.textContent = "H";
+        };
+        image.src = photoUrl;
+        button.replaceChildren(image);
+      }
     });
     document
       .querySelectorAll("[data-save-status]")
@@ -312,7 +333,7 @@ export function setupAccount(api) {
   return {
     bind() {
       document
-        .querySelectorAll("[data-account]")
+        .querySelectorAll("[data-account], [data-account-avatar]")
         .forEach((b) => (b.onclick = openDialog));
       update();
     },

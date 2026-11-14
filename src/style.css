@@ -261,7 +261,13 @@ header {
   height: 38px;
   border-radius: 50%;
   font-size: 12px;
+  padding: 0;
+  overflow: hidden;
+  cursor: pointer;
 }
+.avatar[hidden] { display: none; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.avatar:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 main {
   padding: 32px 48px 45px;
   width: 100%;
@@ -1050,6 +1056,8 @@ legend {
   .header-right {
     display: none;
   }
+  .header-right.account-signed-in { display: flex; margin-left: auto; }
+  .header-right .home-label { display: none; }
   .search-wrap {
     width: 100%;
   }

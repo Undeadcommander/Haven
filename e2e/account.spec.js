@@ -14,7 +14,7 @@ async function fakeFirebase(page) {
  let callback,listener,revision=0,inventory;
  return {
  watchAuth(cb){callback=cb;queueMicrotask(()=>cb(null));return ()=>{};},
- async login(){if(window.rejectLogin)throw Error('Google sign-in was cancelled.');callback({uid:'test-alice',displayName:'Test Alice',email:'alice@example.test'});},
+ async login(){if(window.rejectLogin)throw Error('Google sign-in was cancelled.');callback({uid:'test-alice',displayName:'Test Alice',email:'alice@example.test',photoURL:window.testPhotoURL});},
  async logout(){callback(null);},
  async reauthenticate(){window.reauthCalls=(window.reauthCalls||0)+1;if(window.rejectReauth)throw Error('Google verification was cancelled.');},
  async deleteAccount(){window.deleteCalls=(window.deleteCalls||0)+1;if(window.failDelete)throw Error('Deletion failed offline.');inventory=undefined;revision=0;callback(null);},
@@ -40,6 +40,45 @@ test("unconfigured sign-in is honest and leaves guest inventory available", asyn
   );
   await page.getByRole("button", { name: "Continue on this device" }).click();
   await expect(page.locator(".room-card")).toHaveCount(1);
+});
+
+test("signed-in avatar opens account settings and shows the profile photo on mobile", async ({ page }) => {
+  await fakeFirebase(page);
+  await page.route("https://example.test/profile.png", (route) => route.fulfill({
+    contentType: "image/png",
+    body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=", "base64"),
+  }));
+  await page.setViewportSize({ width: 320, height: 740 });
+  await page.goto("/");
+  await page.evaluate(() => { window.testPhotoURL = "https://example.test/profile.png"; });
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByRole("button", { name: "Continue with Google" }).click();
+  const avatar = page.getByRole("button", { name: "Account", exact: true });
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeHidden();
+  await expect(avatar).toBeVisible();
+  await expect(avatar.locator("img")).toHaveAttribute("src", "https://example.test/profile.png");
+  await expect.poll(() => avatar.locator("img").evaluate((image) => image.complete && image.naturalWidth > 0)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+  await page.getByRole("button", { name: "Open Living room", exact: true }).click();
+  await expect(avatar.locator("img")).toHaveAttribute("src", "https://example.test/profile.png");
+  await avatar.click();
+  await expect(page.getByRole("dialog", { name: "Haven account" })).toBeVisible();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(avatar).toBeHidden();
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
+});
+
+test("signed-in avatar falls back to H when a profile image is unavailable", async ({ page }) => {
+  await fakeFirebase(page);
+  await page.route("https://example.test/missing.png", (route) => route.abort());
+  await page.goto("/");
+  await page.evaluate(() => { window.testPhotoURL = "https://example.test/missing.png"; });
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByRole("button", { name: "Continue with Google" }).click();
+  const avatar = page.getByRole("button", { name: "Account", exact: true });
+  await expect(avatar).toHaveText("H");
+  await avatar.click();
+  await expect(page.getByRole("button", { name: "Sync now" })).toBeVisible();
 });
 test("Google account flow keeps guest data separate and copies it only on request", async ({
   page,
