@@ -65,6 +65,7 @@ export async function captureDepth(overlay, onProgress, { signal } = {}) {
       finishButton.disabled = true;
       signal?.removeEventListener("abort", cancel);
       session?.removeEventListener("end", onEnd);
+      space?.removeEventListener?.("reset", onReset);
       points = null;
       voxels.clear();
       if (error) reject(error);
@@ -87,6 +88,9 @@ export async function captureDepth(overlay, onProgress, { signal } = {}) {
       releaseGraphics();
       if (settled) return;
       if (failed) return complete(failed);
+      if (!stopping) return complete(Error(
+        "Camera capture was interrupted before Finish scan. The existing scan has not changed. Try scanning again.",
+      ));
       if (pointCount < 100)
         return complete(Error(
           "Not enough depth data was captured. Scan textured surfaces in good light, or import a scan.",
@@ -99,6 +103,11 @@ export async function captureDepth(overlay, onProgress, { signal } = {}) {
       if (settled || stopping) return;
       stopping = true;
       shutdown().then(onEnd, (error) => complete(failed || captureFailure(error)));
+    }
+    function onReset() {
+      if (settled || stopping) return;
+      failed = Error("Camera tracking reset during capture. The existing scan has not changed. Start a new scan when tracking is stable.");
+      stop();
     }
     finishButton.disabled = true;
     finishButton.onclick = stop;
@@ -172,6 +181,7 @@ export async function captureDepth(overlay, onProgress, { signal } = {}) {
         session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
         space = await session.requestReferenceSpace("local");
         if (settled) return;
+        space.addEventListener?.("reset", onReset);
         points = new Float32Array(MAX_CAPTURE_POINTS * 3);
         finishButton.disabled = false;
         session.requestAnimationFrame(frame);

@@ -80,7 +80,7 @@ export function photoEditorFields() {
       </div>
     </div>
     </div>
-    <output class="photo-crop-size" id="photo-crop-status" data-photo-size aria-live="polite" aria-atomic="true"></output>
+    <p class="photo-crop-size" id="photo-crop-status" data-photo-size role="status" aria-live="polite" aria-atomic="true"></p>
     <div class="photo-editor-actions"><button type="button" class="text-button" data-photo-reset>Reset crop</button><button type="button" class="secondary" data-photo-cancel>Cancel crop</button><button type="button" class="primary" data-photo-apply>Use photo</button></div>
   </div>`;
 }
@@ -111,8 +111,8 @@ export function bindPhotoEditor(editor, image, initial = {}) {
     const handleSize = Math.min(32, rect.width * displayScale / 3, rect.height * displayScale / 3);
     selection.style.setProperty("--crop-handle-size", `${handleSize}px`);
     selection.style.setProperty("--crop-handle-offset", `${-handleSize / 2 - 1}px`);
-    selection.style.setProperty("--crop-handle-inset", `${handleSize / 2 - 1}px`);
-    if (announce) editor.querySelector("[data-photo-size]").value =
+    selection.style.setProperty("--crop-handle-inset", `${Math.max(0, handleSize / 2 - 1)}px`);
+    if (announce) editor.querySelector("[data-photo-size]").textContent =
       `Crop: ${Math.round(rect.width)} by ${Math.round(rect.height)} pixels. Position: ${Math.round(rect.x / width * 100)}% from left, ${Math.round(rect.y / height * 100)}% from top.`;
   };
   const center = () => {

@@ -1,6 +1,7 @@
 import { initialState, validState } from "./store.js";
 import { deletionKey, isDeletingRecord } from "./delete-account-data.js";
 export const accountKey = (uid) => `haven-account:${uid}`;
+const scanAssets = (inventory) => [...new Set((inventory?.scans || []).map((scan) => scan.assetId))];
 
 // Sync is transport-independent so races, retries and account isolation can be tested.
 export class AccountSync {
@@ -84,7 +85,10 @@ export class AccountSync {
   saveLocal(inventory) {
     if (this.status === "deleting" || this.storage.getItem(deletionKey(this.uid)))
       throw Error("Account deletion is in progress. Editing and sync are paused.");
-    const next = { ...this.record, inventory, dirty: true };
+    // Keep the last account version's files until this edit has been accepted.
+    // Older dirty records without this list must defer garbage collection.
+    const baseAssets = this.record.dirty ? this.record.baseAssets : scanAssets(this.record.inventory);
+    const next = { ...this.record, inventory, dirty: true, baseAssets };
     this.cache(next);
     this.record = next;
     this.edit++;
@@ -172,7 +176,8 @@ export class AccountSync {
     try {
       const revision = await task;
       if (generation !== this.generation) return;
-      const next = { ...this.record, revision, dirty: this.edit !== edit };
+      const next = { ...this.record, revision, dirty: this.edit !== edit,
+        baseAssets: scanAssets(record.inventory) };
       this.cache(next);
       this.record = next;
       this.signal(
@@ -211,6 +216,12 @@ export class AccountSync {
     // Keep the current inventory and let receive() reconcile revisions before writing.
     this.disconnect();
     this.connect();
+  }
+  get retainedAssetIds() {
+    if (!this.record || this.status === "connecting" || this.status === "deleting" ||
+        (this.record.dirty && !Array.isArray(this.record.baseAssets))) return null;
+    return new Set([...scanAssets(this.record.inventory),
+      ...(this.record.dirty ? this.record.baseAssets : [])]);
   }
   async pauseForDeletion() {
     const pending = this.inFlight;

@@ -8,6 +8,7 @@ import {
   setAssetScope,
   createBackupBlob,
   deleteAccountAssets,
+  reconcileAssets,
 } from "./scan-storage.js";
 const configured = !!(
   config.apiKey &&
@@ -52,7 +53,32 @@ export function setupAccount(api) {
       );
     return parsed;
   };
+  let cleanupTimer;
+  function scheduleAssetCleanup(delay = 50) {
+    clearTimeout(cleanupTimer);
+    cleanupTimer = setTimeout(async () => {
+      const uid = user?.uid || null, epoch = authEpoch;
+      try {
+        const nextExpiry = await reconcileAssets(() => {
+          if (!ready || epoch !== authEpoch || uid !== (user?.uid || null)) return null;
+          const retained = uid ? sync.retainedAssetIds : new Set((guest().scans || []).map((scan) => scan.assetId));
+          if (!retained) return null;
+          const recovery = uid && localStorage.getItem(`haven-recovery:${uid}`);
+          if (recovery) {
+            const inventory = JSON.parse(recovery);
+            if (!validState(inventory)) return null;
+            for (const scan of inventory.scans || []) retained.add(scan.assetId);
+          }
+          return retained;
+        }, uid);
+        if (Number.isFinite(nextExpiry)) scheduleAssetCleanup(Math.max(1000, nextExpiry - Date.now()));
+      } catch {
+        scheduleAssetCleanup(30_000);
+      }
+    }, delay);
+  }
   function update() {
+    scheduleAssetCleanup();
     if (sync.status === "deleting") ready = false;
     document.querySelectorAll("[data-account]").forEach((b) => {
       b.hidden = !!user;
@@ -224,6 +250,7 @@ export function setupAccount(api) {
             throw Error("Your inventory changed during the copy. Please try again.");
           sync.saveLocal(merged.inventory);
           committed = true;
+          await staged.commit?.();
           api.replace(merged.inventory);
           problem = "";
           update();
@@ -356,6 +383,7 @@ export function setupAccount(api) {
       return sync;
     },
     initialize,
+    cleanupAssets: scheduleAssetCleanup,
     save(inventory) {
       if (sync.status === "deleting")
         throw Error("Account deletion is unfinished. Open Account → Delete account to finish.");
@@ -365,6 +393,7 @@ export function setupAccount(api) {
         );
       if (user) sync.saveLocal(inventory);
       else localStorage.setItem("haven-inventory", JSON.stringify(inventory));
+      scheduleAssetCleanup();
     },
     externalChange(key) {
       if (user && (key === deletionKey(user.uid) || key === `haven-account:${user.uid}`)) authEpoch++;
@@ -382,7 +411,10 @@ export function setupAccount(api) {
         }
         return;
       }
-      if (key === "haven-inventory") api.replace(guest());
+      if (key === "haven-inventory") {
+        api.replace(guest());
+        scheduleAssetCleanup();
+      }
     },
   };
 }

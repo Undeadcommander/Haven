@@ -43,6 +43,30 @@ const baseRemote = () => ({
   read: async () => initialState(),
   publish: async (_uid, _inventory, revision) => revision + 1,
 });
+
+test("pending scan removals retain the account base across reload and concurrent upload edits", async () => {
+  const inventory = edited("Keys");
+  inventory.scans = [{ id: "scan", assetId: "old-file", locationId: "living-room", name: "room", format: "obj" }];
+  const pending = deferred(), remote = { ...baseRemote(), read: async () => inventory, publish: () => pending.promise };
+  const { sync, store } = controller(remote);
+  await sync.select("alice");
+  await sync.receive({ revision: 1 });
+  sync.saveLocal(edited("Keys"));
+  assert.deepEqual([...sync.retainedAssetIds], ["old-file"]);
+  const reloaded = controller(remote, store).sync;
+  await reloaded.select("alice");
+  await reloaded.receive({ revision: 1 });
+  assert.deepEqual([...reloaded.retainedAssetIds], ["old-file"]);
+  await reloaded.select(null);
+  const upload = sync.flush();
+  const next = edited("Edited during upload");
+  next.scans = [{ ...inventory.scans[0], assetId: "new-file" }];
+  sync.saveLocal(next);
+  pending.resolve(2);
+  await upload;
+  assert.deepEqual([...sync.retainedAssetIds], ["new-file"]);
+  await sync.select(null);
+});
 test("successful sync stores revision and clears dirty only after remote commit", async () => {
   const { sync, store } = controller(baseRemote());
   await sync.select("alice");

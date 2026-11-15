@@ -10,7 +10,6 @@ import {
   createBackupBlob,
   MAX_BACKUP_BYTES,
   stageBackup,
-  deleteAssets,
   getAssetScope,
 } from "./scan-storage.js";
 import { initialState, validState, createIndex, descendants, searchInventory, inventoryColors } from "./store.js";
@@ -82,7 +81,6 @@ const account = setupAccount({
 });
 function save(next) {
   next = pruneScanLinks(next);
-  const previousScans = state.scans || [];
   try {
     account.save(next);
   } catch (error) {
@@ -96,10 +94,6 @@ function save(next) {
   inventoryEpoch++;
   state = next;
   index = createIndex(state);
-  const retainedAssets = new Set(next.scans.map((scan) => scan.assetId));
-  const removedAssets = [...new Set(previousScans.map((scan) => scan.assetId))]
-    .filter((id) => !retainedAssets.has(id));
-  deleteAssets(removedAssets).catch(() => {});
   return true;
 }
 function navigate(id = null, itemId = null) {
@@ -616,6 +610,7 @@ function importData() {
               await staged.rollback();
               throw Error("Could not save the restored inventory.");
             }
+            await staged.commit?.();
             storageIssue = "";
             dialog.close();
             navigate();
@@ -654,6 +649,7 @@ async function showRoomScan() {
       getState: () => state,
       getIndex: () => index,
       getScope: () => account.uid,
+      cleanupAssets: () => account.cleanupAssets(),
       subscribe(listener) {
         inventoryChanges.addEventListener("replace", listener);
         return () => inventoryChanges.removeEventListener("replace", listener);

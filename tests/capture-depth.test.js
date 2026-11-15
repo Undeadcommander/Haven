@@ -24,7 +24,8 @@ function setup(context, { pendingSession, compatible, reference } = {}) {
     requestAnimationFrame(callback) { calls.frames++; this.frame = callback; }
     async end() { calls.ends++; this.dispatchEvent(new Event("end")); }
   }
-  const session = new Session();
+  const session = new Session(), space = new EventTarget();
+  if (!reference) session.requestReferenceSpace = async () => space;
   const globals = {
     navigator: { xr: { requestSession() { calls.sessions++; return pendingSession?.promise || Promise.resolve(session); } } },
     document: { createElement: () => ({ getContext() { calls.contexts++; return graphics; } }) },
@@ -38,7 +39,7 @@ function setup(context, { pendingSession, compatible, reference } = {}) {
       else delete globalThis[name];
     });
   }
-  return { overlay, finish, cancel, session, calls };
+  return { overlay, finish, cancel, session, calls, space };
 }
 
 test("depth capture keeps its point cap and exports only captured Float32 coordinates", { timeout: 5000 }, async (context) => {
@@ -140,7 +141,7 @@ test("session loss during startup settles and releases its context", { timeout: 
   const reference = deferred();
   const { overlay, session, calls } = setup(context, { reference });
   const result = captureDepth(overlay, () => {});
-  const rejection = assert.rejects(result, /Not enough depth data/);
+  const rejection = assert.rejects(result, /interrupted.*existing scan has not changed/);
   await flush();
   session.dispatchEvent(new Event("end"));
   await rejection;
@@ -149,6 +150,28 @@ test("session loss during startup settles and releases its context", { timeout: 
   assert.equal(calls.frames, 0);
   assert.equal(calls.losses, 1);
 });
+
+for (const interruption of ["end", "reset"]) {
+  test(`a ${interruption} after collecting points never exports a partial scan`, async (context) => {
+    const { overlay, session, space, calls } = setup(context);
+    let count = 0;
+    const result = captureDepth(overlay, (value) => { count = value; });
+    const rejection = assert.rejects(result, /existing scan has not changed/);
+    await flush();
+    const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    session.frame(0, {
+      getViewerPose: () => ({ views: [{ projectionMatrix: identity, transform: { matrix: identity } }] }),
+      getDepthInformation: () => ({ width: 64, height: 64,
+        normDepthBufferFromNormView: { matrix: identity }, getDepthInMeters: () => 2 }),
+    });
+    assert.equal(count, 256);
+    (interruption === "end" ? session : space).dispatchEvent(new Event(interruption));
+    await rejection;
+    assert.equal(calls.losses, 1);
+    space.dispatchEvent(new Event("reset"));
+    assert.equal(calls.losses, 1);
+  });
+}
 
 test("failed session shutdown rejects instead of leaving capture pending", { timeout: 2000 }, async (context) => {
   const { overlay, finish, session, calls } = setup(context);

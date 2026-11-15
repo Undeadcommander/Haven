@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { getAsset, putAsset, deleteAsset } from "./scan-storage.js";
+import { getAsset, putAsset, deleteAsset, commitAssets } from "./scan-storage.js";
 import { createIndex, descendants } from "./store.js";
 import { captureDepth } from "./capture-depth.js";
 import "./scan.css";
@@ -79,9 +79,8 @@ export async function openScanViewer(locationId, api) {
     return saved;
   };
   const deleteUnusedAsset = (id) => {
-    if ((api.getScope?.() || null) !== openScope ||
-        api.getState().scans?.some((entry) => entry.assetId === id)) return;
-    deleteAsset(id, openScope).catch(() => {});
+    // The account owns cleanup, including unsynced and recovery inventories.
+    api.cleanupAssets?.();
   };
   function ensureCurrentScan(expected = displayedScan) {
     if (closed) return false;
@@ -114,6 +113,7 @@ export async function openScanViewer(locationId, api) {
       ? inventoryIndex().itemById.get(m.targetId)
       : inventoryIndex().byId.get(m.targetId);
   const markerButtons = new Map();
+  let selectedMarkerId = null, refreshPlacement = null;
   const close = () => {
     if (busy) {
       tell(
@@ -191,6 +191,10 @@ export async function openScanViewer(locationId, api) {
       camera.updateProjectionMatrix();
       paint();
     });
+    const { width, height } = stage.getBoundingClientRect();
+    renderer.setSize(Math.max(1, width), Math.max(1, height));
+    camera.aspect = Math.max(1, width) / Math.max(1, height);
+    camera.updateProjectionMatrix();
     observer.observe(stage);
     renderer.domElement.addEventListener("webglcontextlost", (e) => {
       e.preventDefault();
@@ -203,11 +207,25 @@ export async function openScanViewer(locationId, api) {
       e.preventDefault();
       pick(e);
     });
+    const pointers = new Map();
+    let dragged = false;
     renderer.domElement.addEventListener("click", (e) => {
-      if (placement) pick(e);
+      if (placement && !dragged) pick(e);
     });
-    renderer.domElement.addEventListener("pointerdown", () => {
+    renderer.domElement.addEventListener("pointerdown", (e) => {
       menu.hidden = true;
+      if (!pointers.size) dragged = false;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size > 1) dragged = true;
+    });
+    renderer.domElement.addEventListener("pointermove", (e) => {
+      const start = pointers.get(e.pointerId);
+      if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 6) dragged = true;
+    });
+    renderer.domElement.addEventListener("pointerup", (e) => pointers.delete(e.pointerId));
+    renderer.domElement.addEventListener("pointercancel", (e) => {
+      dragged = true;
+      pointers.delete(e.pointerId);
     });
   }
   function fit() {
@@ -218,10 +236,13 @@ export async function openScanViewer(locationId, api) {
     camera.near = Math.max(radius / 10000, 0.0001);
     camera.far = radius * 100;
     camera.updateProjectionMatrix();
+    const vertical = THREE.MathUtils.degToRad(camera.fov) / 2;
+    const horizontal = Math.atan(Math.tan(vertical) * camera.aspect);
+    const distance = radius / Math.sin(Math.min(vertical, horizontal)) * 1.05;
     camera.position
       .copy(center)
       .add(
-        new THREE.Vector3(1, 0.8, 1.2).normalize().multiplyScalar(radius * 2.5),
+        new THREE.Vector3(1, 0.8, 1.2).normalize().multiplyScalar(distance),
       );
     controls.target.copy(center);
     controls.minDistance = radius * 0.015;
@@ -245,7 +266,7 @@ export async function openScanViewer(locationId, api) {
     fit();
     refreshMarkers();
   }
-  function refreshMarkers() {
+  function refreshMarkers({ preservePanel = false } = {}) {
     dots.replaceChildren();
     markerButtons.clear();
     for (const m of markers()) {
@@ -263,10 +284,14 @@ export async function openScanViewer(locationId, api) {
       dots.append(b);
       markerButtons.set(m.id, b);
     }
-    listMarkers();
+    if (preservePanel && refreshPlacement) refreshPlacement();
+    else if (preservePanel && selectedMarkerId && markers().some((marker) => marker.id === selectedMarkerId)) showDetails(selectedMarkerId);
+    else listMarkers();
     paint();
   }
   function listMarkers() {
+    selectedMarkerId = null;
+    refreshPlacement = null;
     panel.innerHTML = `<div class="eyebrow">PINNED IN THIS SPACE</div><h3>On the map <span>${markers().length}</span></h3><div class="marker-list">${
       markers()
         .map(
@@ -285,9 +310,11 @@ export async function openScanViewer(locationId, api) {
     const m = markers().find((m) => m.id === id),
       target = m && targetOf(m);
     if (!target) {
-      refreshMarkers();
+      listMarkers();
       return;
     }
+    selectedMarkerId = id;
+    refreshPlacement = null;
     const { index } = snapshot();
     const path = index.path(m.kind === "item" ? target.locationId : target.id);
     panel.innerHTML = `<button class="text-button" data-back-markers>← All markers</button><div class="eyebrow marker-kind">${m.kind === "container" ? "CONTAINER" : "ITEM"}</div><h3>${esc(target.name)}</h3><p class="scan-detail">${esc(m.kind === "item" ? target.notes || "No extra details" : target.description || "A space for your things.")}</p><p class="scan-path">${esc(path)}</p>${m.kind === "container" ? `<p class="scan-muted">${index.summaries.get(target.id)?.count || 0} items · ${(index.children.get(target.id) || []).length} containers</p>` : ""}<button class="primary" data-open-marker>${m.kind === "container" ? "Open container" : "Open item location"}</button><button class="text-button marker-remove" data-unpin>Remove marker</button><p class="scan-muted">Removing a marker keeps the ${m.kind === "container" ? "container and its contents" : "item"} in your inventory.</p>`;
@@ -372,6 +399,21 @@ export async function openScanViewer(locationId, api) {
     panel.innerHTML = `<button class="text-button" data-back-markers>← Cancel placement</button><h3>${kind === "item" ? "Add item marker" : "Mark a container"}</h3><form class="marker-form"><label>Choose an option<select name="mode"><option value="existing" ${candidates.length ? "" : "disabled"}>Link existing ${kind}</option><option value="new" ${candidates.length ? "" : "selected"}>Create new ${kind}</option></select></label><label data-existing>Existing ${kind}<select name="target">${candidates.map((t) => `<option value="${esc(t.id)}">${esc(t.name)} — ${esc(index.path(kind === "item" ? t.locationId : t.id))}</option>`).join("")}</select></label><div data-new><label>${kind === "item" ? "Item" : "Container"} name<input name="name" maxlength="150"></label><label>${kind === "item" ? "Details" : "Description"}<textarea name="details" maxlength="1000"></textarea></label></div><p class="scan-muted">${kind === "item" ? "New items are added to this space. Existing items keep their current container." : "New containers are created inside this space. Open a container marker to add items or nested containers."}</p><button class="primary" type="submit">Save marker</button></form>`;
     const form = panel.querySelector("form"),
       mode = form.elements.mode;
+    selectedMarkerId = null;
+    refreshPlacement = () => {
+      const { state, index } = snapshot(), ids = descendants(index, locationId);
+      const candidates = kind === "item" ? state.items.filter((item) => ids.has(item.locationId))
+        : state.locations.filter((entry) => entry.id !== locationId && ids.has(entry.id));
+      const selected = form.elements.target.value;
+      form.elements.target.innerHTML = candidates.map((target) => `<option value="${esc(target.id)}">${esc(target.name)} — ${esc(index.path(kind === "item" ? target.locationId : target.id))}</option>`).join("");
+      if (selected && !candidates.some((target) => target.id === selected)) {
+        const missing = new Option("This target moved or was deleted. Choose another.", selected, false, true);
+        missing.disabled = true;
+        form.elements.target.prepend(missing);
+      }
+      form.elements.target.value = selected;
+      mode.querySelector('[value="existing"]').disabled = !candidates.length;
+    };
     const toggle = () => {
       const isNew = mode.value === "new";
       panel.querySelector("[data-new]").hidden = !isNew;
@@ -482,7 +524,7 @@ export async function openScanViewer(locationId, api) {
         throw Error("This scan changed. Reopen it before importing a replacement.");
       init(); // Confirm graphics support before replacing a previous scan.
       assetId = crypto.randomUUID();
-      await putAsset(assetId, blob, openScope);
+      await putAsset(assetId, blob, openScope, { staged: true });
       if (!ensureCurrentScan(expected))
         throw Error("This scan changed. The replacement was not saved.");
       const s = api.getState(),
@@ -500,6 +542,7 @@ export async function openScanViewer(locationId, api) {
         throw Error(
           "Scan metadata could not be saved. The previous scan is unchanged.",
         );
+      await commitAssets([assetId], openScope).catch(() => {});
       showObject(object, entry);
       object = null;
       if (previous) deleteUnusedAsset(previous.assetId);
@@ -606,7 +649,9 @@ export async function openScanViewer(locationId, api) {
       setBusy(false);
     }
   };
-  unsubscribe = api.subscribe?.(() => ensureCurrentScan());
+  unsubscribe = api.subscribe?.(() => {
+    if (ensureCurrentScan()) refreshMarkers({ preservePanel: true });
+  });
   listMarkers();
   const active = scan();
   if (active) {

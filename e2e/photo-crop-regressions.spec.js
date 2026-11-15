@@ -102,6 +102,7 @@ test.describe("wide mobile photos", () => {
     await selection.scrollIntoViewIfNeeded();
     const stage = await page.locator("[data-photo-stage]").boundingBox();
     expect(stage.height).toBeGreaterThanOrEqual(79);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
     const box = await selection.boundingBox();
     expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y).hasAttribute("data-photo-selection"), {
       x: box.x + box.width / 2, y: box.y + box.height / 2,

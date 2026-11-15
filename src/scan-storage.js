@@ -39,15 +39,59 @@ export const getAssetScope = () => activeScope;
 const key = (id, scope) => (scope ? `${scope}:${id}` : id);
 // Array keys cannot collide with the string keys used for scan files.
 const ownerKey = (id, scope) => ["backup-owner", key(id, scope)];
+const STAGING_LIFETIME = 60 * 60 * 1000;
+const stagingOwner = (owner = crypto.randomUUID()) => ({ owner, expiresAt: Date.now() + STAGING_LIFETIME });
 export async function getAsset(id, scope = activeScope) {
   let blob = await transaction("readonly", (s) => s.get(key(id, scope)));
   return blob;
 }
-export const putAsset = (id, blob, scope = activeScope) =>
+export const putAsset = (id, blob, scope = activeScope, { staged = false } = {}) =>
   transaction("readwrite", (s) => {
-    s.delete(ownerKey(id, scope));
+    if (staged) s.put(stagingOwner(), ownerKey(id, scope));
+    else s.delete(ownerKey(id, scope));
     return s.put(blob, key(id, scope));
   });
+export const commitAssets = (ids, scope = activeScope) => ids.length
+  ? transaction("readwrite", (store) => {
+      for (const id of ids) store.delete(ownerKey(id, scope));
+    }) : Promise.resolve();
+
+// Re-evaluate retention in each cursor callback: metadata can change while a
+// transaction is queued. Staging leases also protect imports in other tabs.
+export async function reconcileAssets(retainedIds, scope = activeScope) {
+  const db = await open();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("assets", "readwrite"), store = tx.objectStore("assets");
+    let nextExpiry = Infinity;
+    tx.oncomplete = () => resolve(nextExpiry);
+    tx.onerror = tx.onabort = () => reject(Error("Scan cleanup will be retried when storage is available."));
+    const request = store.openKeyCursor();
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) return;
+      const retained = retainedIds();
+      if (!retained) return;
+      const assetKey = cursor.key;
+      const prefix = scope ? `${scope}:` : "";
+      const belongs = typeof assetKey === "string" &&
+        (scope ? assetKey.startsWith(prefix) : !assetKey.includes(":"));
+      if (!belongs || retained.has(assetKey.slice(prefix.length))) {
+        cursor.continue();
+        return;
+      }
+      const owner = store.get(["backup-owner", assetKey]);
+      owner.onsuccess = () => {
+        const expiry = owner.result?.expiresAt || 0;
+        if (expiry > Date.now()) nextExpiry = Math.min(nextExpiry, expiry);
+        else {
+          store.delete(assetKey);
+          store.delete(["backup-owner", assetKey]);
+        }
+        cursor.continue();
+      };
+    };
+  });
+}
 export const deleteAsset = (id, scope = activeScope) =>
   transaction("readwrite", (s) => {
     s.delete(ownerKey(id, scope));
@@ -70,10 +114,10 @@ export async function copyAssets(assets, fromScope, toScope) {
     for (const [oldId, newId] of assets) {
       const blob = await getAsset(oldId, fromScope);
       if (!blob) throw Error("A device scan is missing. Restore its backup before copying.");
-      await putAsset(newId, blob, toScope);
+      await putAsset(newId, blob, toScope, { staged: true });
       created.push(newId);
     }
-    return { rollback };
+    return { rollback, commit: () => commitAssets(created, toScope) };
   } catch (error) {
     try { await rollback(); }
     catch { throw Error(`${error.message} Copied files could not be cleaned up; browser storage is unavailable.`); }
@@ -187,7 +231,7 @@ async function stageAsset(id, blob, scope, owner) {
       const existing = request.result;
       if (existing === undefined) {
         store.add(blob, key(id, scope));
-        store.put(owner, ownerKey(id, scope));
+        store.put(stagingOwner(owner), ownerKey(id, scope));
         created = true;
         return;
       }
@@ -219,7 +263,7 @@ async function rollbackStaged(created, scope, owner) {
     for (const id of created) {
       const request = store.get(ownerKey(id, scope));
       request.onsuccess = () => {
-        if (request.result === owner) {
+        if (request.result?.owner === owner) {
           store.delete(key(id, scope));
           store.delete(ownerKey(id, scope));
         }
@@ -258,6 +302,7 @@ export async function stageBackup(backup, scope = activeScope) {
     return {
       inventory,
       rollback,
+      commit: () => commitAssets(created, scope),
     };
   } catch (error) {
     await rollback();
