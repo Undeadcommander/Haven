@@ -1,6 +1,6 @@
 .house-switcher {
   position: relative;
-  flex: 0 1 280px;
+  flex: 0 1 320px;
   min-width: 0;
   max-width: 100%;
   color: var(--ink, #293e35);
@@ -14,7 +14,7 @@
 .house-switcher__controls {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -44,15 +44,21 @@
   flex: 1 1 auto;
   min-width: 0;
   max-width: 220px;
+  padding-inline: 14px;
 }
 
-.house-switcher__add {
+.house-switcher .house-switcher__add {
   flex: 0 0 auto;
+  justify-content: center;
+  padding-inline: 14px;
   white-space: nowrap;
   font-weight: 600;
 }
 
 .house-switcher__add > span {
+  display: grid;
+  flex: 0 0 16px;
+  place-items: center;
   font-size: 18px;
   line-height: 1;
 }
@@ -224,7 +230,7 @@
   }
 
   .house-switcher__controls {
-    gap: 4px;
+    gap: 8px;
   }
 
   .house-switcher__trigger {
@@ -232,9 +238,9 @@
   }
 
   .house-switcher__trigger,
-  .house-switcher__add {
-    gap: 5px;
-    padding-inline: 7px;
+  .house-switcher .house-switcher__add {
+    gap: 7px;
+    padding-inline: 10px;
   }
 
   .house-switcher__icon {
