@@ -1,4 +1,5 @@
 import { Matrix4, Vector3 } from "three";
+const MAX_CAPTURE_POINTS = 200_000;
 // Depth is distance along the camera's -Z axis; remap depth-image UVs to view UVs.
 export function depthPoint(
   u,
@@ -48,8 +49,9 @@ export async function captureDepth(overlay, onProgress, { signal } = {}) {
   return new Promise((resolve, reject) => {
     const finishButton = overlay.querySelector("[data-finish-capture]"),
       cancelButton = overlay.querySelector("[data-cancel-capture]"),
-      points = [], voxels = new Set();
+      voxels = new Set();
     let session, gl, space, failed,
+      points, pointCount = 0,
       frames = 0, settled = false, stopping = false, ended = false;
     const releaseGraphics = () => {
       const context = gl;
@@ -63,6 +65,8 @@ export async function captureDepth(overlay, onProgress, { signal } = {}) {
       finishButton.disabled = true;
       signal?.removeEventListener("abort", cancel);
       session?.removeEventListener("end", onEnd);
+      points = null;
+      voxels.clear();
       if (error) reject(error);
       else resolve(blob);
     };
@@ -83,11 +87,11 @@ export async function captureDepth(overlay, onProgress, { signal } = {}) {
       releaseGraphics();
       if (settled) return;
       if (failed) return complete(failed);
-      if (points.length < 300)
+      if (pointCount < 100)
         return complete(Error(
           "Not enough depth data was captured. Scan textured surfaces in good light, or import a scan.",
         ));
-      complete(null, new Blob([new Float32Array(points)], {
+      complete(null, new Blob([points.subarray(0, pointCount * 3)], {
         type: "application/octet-stream",
       }));
     }
@@ -121,13 +125,17 @@ export async function captureDepth(overlay, onProgress, { signal } = {}) {
                 const point = sampleDepthPoint(depth, x, y, inverseUV, projection, transform);
                 if (!point) continue;
                 const key = [point.x, point.y, point.z].map((value) => Math.round(value / 0.03)).join(",");
-                if (!voxels.has(key) && points.length < 600_000) {
+                if (!voxels.has(key) && pointCount < MAX_CAPTURE_POINTS) {
                   voxels.add(key);
-                  points.push(point.x, point.y, point.z);
+                  const offset = pointCount * 3;
+                  points[offset] = point.x;
+                  points[offset + 1] = point.y;
+                  points[offset + 2] = point.z;
+                  pointCount++;
                 }
               }
-            onProgress(points.length / 3);
-            if (points.length >= 600_000) {
+            onProgress(pointCount);
+            if (pointCount >= MAX_CAPTURE_POINTS) {
               stop();
               return;
             }
@@ -164,6 +172,7 @@ export async function captureDepth(overlay, onProgress, { signal } = {}) {
         session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
         space = await session.requestReferenceSpace("local");
         if (settled) return;
+        points = new Float32Array(MAX_CAPTURE_POINTS * 3);
         finishButton.disabled = false;
         session.requestAnimationFrame(frame);
       } catch (error) {

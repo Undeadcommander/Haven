@@ -90,6 +90,28 @@ const toDataURL = (blob) =>
     reader.readAsDataURL(blob);
   });
 export const MAX_BACKUP_BYTES = 250_000_000;
+function decodeAsset(data) {
+  if (!data || !/^data:[\w/+.-]*;base64,[A-Za-z0-9+/]*={0,2}$/.test(data))
+    throw Error("A scan file is missing or invalid in this backup.");
+  const start = data.indexOf(",") + 1;
+  const length = data.length - start;
+  const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+  if (length % 4 === 1 || (padding && length % 4 !== 0))
+    throw Error("A scan file is missing or invalid in this backup.");
+  const size = Math.floor(length * 3 / 4) - padding;
+  if (size > 30_000_000)
+    throw Error("A scan in this backup exceeds the 30 MB limit.");
+  const bytes = new Uint8Array(size);
+  // Decode complete base64 groups into one destination buffer. Avoid a
+  // full-size binary string and Uint8Array.from's intermediate number array.
+  const chunkSize = 32_768;
+  let offset = 0;
+  for (let i = start; i < data.length; i += chunkSize) {
+    const chunk = atob(data.slice(i, i + chunkSize));
+    for (let j = 0; j < chunk.length; j++) bytes[offset++] = chunk.charCodeAt(j);
+  }
+  return new Blob([bytes]);
+}
 export async function createBackupBlob(inventory, scope = activeScope) {
   // Blob parts allow each asset's base64/JSON strings to be collected before
   // encoding the next file. Never stringify the full backup a second time.
@@ -143,15 +165,7 @@ export async function stageBackup(backup, scope = activeScope) {
       ? (await import("./scan-model.js")).validateScanAsset : null;
     for (const scan of inventory.scans || []) {
       const data = assets.get(scan.assetId);
-      if (!data || !/^data:[\w/+.-]*;base64,[A-Za-z0-9+/=]*$/.test(data))
-        throw Error("A scan file is missing or invalid in this backup.");
-      const encoded = data.slice(data.indexOf(",") + 1);
-      if (encoded.length > 45_000_000)
-        throw Error("A scan in this backup exceeds the 30 MB limit.");
-      const bytes = Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0));
-      if (bytes.byteLength > 30_000_000)
-        throw Error("A scan in this backup is too large.");
-      const blob = new Blob([bytes]);
+      const blob = decodeAsset(data);
       // Use the same parser and geometry checks as normal scan import, before
       // any inventory can be replaced. Validation does not create a renderer.
       await validate(blob, scan.format);

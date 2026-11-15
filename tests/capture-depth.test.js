@@ -13,6 +13,7 @@ function setup(context, { pendingSession, compatible, reference } = {}) {
   const overlay = { querySelector: (selector) => selector.includes("finish") ? finish : cancel };
   const calls = { sessions: 0, contexts: 0, losses: 0, frames: 0, references: 0, ends: 0 };
   const graphics = {
+    bindFramebuffer() {}, clearColor() {}, clear() {},
     makeXRCompatible: () => compatible?.promise || Promise.resolve(),
     getExtension: () => ({ loseContext() { calls.losses++; } }),
   };
@@ -20,7 +21,7 @@ function setup(context, { pendingSession, compatible, reference } = {}) {
     renderState = {};
     updateRenderState(state) { this.renderState = state; }
     requestReferenceSpace() { calls.references++; return reference?.promise || Promise.resolve({}); }
-    requestAnimationFrame() { calls.frames++; }
+    requestAnimationFrame(callback) { calls.frames++; this.frame = callback; }
     async end() { calls.ends++; this.dispatchEvent(new Event("end")); }
   }
   const session = new Session();
@@ -39,6 +40,50 @@ function setup(context, { pendingSession, compatible, reference } = {}) {
   }
   return { overlay, finish, cancel, session, calls };
 }
+
+test("depth capture keeps its point cap and exports only captured Float32 coordinates", { timeout: 5000 }, async (context) => {
+  const { overlay, session } = setup(context);
+  const progress = [];
+  const result = captureDepth(overlay, (count) => progress.push(count));
+  await flush();
+  const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  let frame = 0;
+  while (frame < 7000 && (!progress.length || progress.at(-1) < 200_000)) {
+    const transform = [...identity];
+    transform[12] = Math.floor(frame / 8) * 20;
+    session.frame(frame++, {
+      getViewerPose: () => ({ views: [{ projectionMatrix: identity, transform: { matrix: transform } }] }),
+      getDepthInformation: () => ({
+        width: 64, height: 64,
+        normDepthBufferFromNormView: { matrix: identity },
+        getDepthInMeters: () => 2,
+      }),
+    });
+  }
+  assert.equal(progress.at(-1), 200_000);
+  const blob = await result;
+  const points = new Float32Array(await blob.arrayBuffer());
+  assert.equal(blob.size, 200_000 * 3 * Float32Array.BYTES_PER_ELEMENT);
+  assert.deepEqual([...points.subarray(0, 3)], [3.9375, -3.9375, -2]);
+  assert.ok([...points.subarray(-3)].every(Number.isFinite));
+});
+
+test("finishing a short depth capture excludes unused buffer capacity", async (context) => {
+  const { overlay, session, finish } = setup(context);
+  const result = captureDepth(overlay, () => {});
+  await flush();
+  const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  session.frame(0, {
+    getViewerPose: () => ({ views: [{ projectionMatrix: identity, transform: { matrix: identity } }] }),
+    getDepthInformation: () => ({
+      width: 64, height: 64,
+      normDepthBufferFromNormView: { matrix: identity },
+      getDepthInMeters: () => 2,
+    }),
+  });
+  finish.onclick();
+  assert.equal((await result).size, 256 * 12);
+});
 
 test("cancel settles immediately during session permission and closes a late session", { timeout: 2000 }, async (context) => {
   const pendingSession = deferred();

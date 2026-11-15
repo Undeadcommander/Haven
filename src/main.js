@@ -314,6 +314,10 @@ function showSearch() {
       (b) => (b.onclick = () => navigate(b.dataset.target, b.dataset.item)),
     );
 }
+function clearClosedEditor(event) {
+  const dialog = event.currentTarget;
+  if (!dialog.open) dialog.replaceChildren();
+}
 function modal(title, description, fields, onSubmit, label = "Save") {
   const d = document.querySelector("#editor");
   d.innerHTML = `<form><div class="modal-heading"><div><span class="eyebrow">MAKE ROOM</span><h2>${title}</h2></div><button type="button" class="icon-button" data-cancel aria-label="Close dialog">${icon("close")}</button></div><p class="modal-description">${description}</p>${fields}<div class="modal-actions"><button type="button" class="secondary" data-cancel>Cancel</button><button type="submit" class="primary">${label}</button></div></form>`;
@@ -324,6 +328,9 @@ function modal(title, description, fields, onSubmit, label = "Save") {
     e.preventDefault();
     onSubmit(new FormData(e.target), d);
   };
+  // Closed forms can retain parsed backups and decoded photo editor images
+  // through their handlers until the next navigation or modal is opened.
+  d.onclose = clearClosedEditor;
   d.showModal();
 }
 function colorFields(selected = "sage") {

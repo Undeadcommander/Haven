@@ -6,8 +6,13 @@ import { MAX_SCAN_VERTICES, detailError, preflightGLB, preflightOBJ } from "./sc
 export function disposeObject(object) {
   const textures = new Set(),
     materials = new Set(),
-    geometries = new Set();
+    geometries = new Set(),
+    skeletons = new Set();
   object?.traverse((child) => {
+    // Instance buffers and bone textures belong to the object/skeleton, not
+    // its geometry or material. Release them when replacing a scan too.
+    if (child.isInstancedMesh) child.dispose();
+    if (child.skeleton) skeletons.add(child.skeleton);
     if (child.geometry) geometries.add(child.geometry);
     for (const material of (Array.isArray(child.material)
       ? child.material
@@ -24,6 +29,7 @@ export function disposeObject(object) {
   }
   for (const material of materials) material.dispose();
   for (const geometry of geometries) geometry.dispose();
+  for (const skeleton of skeletons) skeleton.dispose();
 }
 export async function readObject(blob, format) {
   let object;

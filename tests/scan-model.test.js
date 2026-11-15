@@ -3,7 +3,32 @@ import assert from "node:assert/strict";
 import { readObject, disposeObject, validateScanAsset } from "../src/scan-model.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
+import { Bone, BoxGeometry, DataTexture, Group, InstancedMesh, MeshBasicMaterial, Skeleton, SkinnedMesh, Texture } from "three";
 import { makeGLB, triangleGLB } from "./helpers/scan-fixtures.js";
+
+test("disposing a scan releases instance buffers, morph textures and shared skeleton resources", () => {
+  const model = new Group();
+  const geometry = new BoxGeometry();
+  const material = new MeshBasicMaterial();
+  material.map = new Texture();
+  const instances = new InstancedMesh(geometry, material, 2);
+  instances.morphTexture = new DataTexture();
+  const skeleton = new Skeleton([new Bone()]);
+  skeleton.computeBoneTexture();
+  const meshes = [new SkinnedMesh(geometry, material), new SkinnedMesh(geometry, material)];
+  for (const mesh of meshes) mesh.skeleton = skeleton;
+  model.add(instances, ...meshes);
+  const resources = [instances, instances.instanceMatrix, instances.morphTexture,
+    skeleton.boneTexture, geometry, material, material.map];
+  const disposals = resources.map(() => 0);
+  resources.forEach((resource, index) => resource.addEventListener("dispose", () => disposals[index]++));
+
+  disposeObject(model);
+
+  assert.deepEqual(disposals, resources.map(() => 1));
+  assert.equal(skeleton.boneTexture, null);
+  assert.equal(instances.morphTexture, null);
+});
 
 test("scan validation rejects empty, truncated and non-finite point clouds", async () => {
   for (const blob of [new Blob(), new Blob([new Uint8Array(3)]),
