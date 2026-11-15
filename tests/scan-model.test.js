@@ -45,6 +45,30 @@ test("external images are rejected before Three can silently drop the texture", 
   assert.equal(parse.mock.callCount(), 0);
 });
 
+test("static scans reject morph targets before loading or allocating morph textures", async (context) => {
+  // Both a small morph and thousands of repeated references must be rejected
+  // before Three parses geometry, rather than relying on unique accessor size.
+  const parse = context.mock.method(GLTFLoader.prototype, "parseAsync", () => { throw Error("Parser must not run"); });
+  for (const count of [1, 128, 1500]) {
+    const buffer = modifyGLB(triangleGLB(), (document) => {
+      document.meshes[0].primitives[0].targets = Array.from({ length: count }, () => ({ POSITION: 0 }));
+    });
+    await assert.rejects(validateScanAsset(new Blob([buffer]), "glb"), /static mesh without morph targets/);
+  }
+  const malformed = modifyGLB(triangleGLB(), (document) => {
+    document.meshes[0].primitives[0].targets = {};
+  });
+  await assert.rejects(validateScanAsset(new Blob([malformed]), "glb"), /Invalid GLB/);
+  assert.equal(parse.mock.callCount(), 0);
+});
+
+test("static GLB geometry with an empty target list remains supported", async () => {
+  const buffer = modifyGLB(triangleGLB(), (document) => {
+    document.meshes[0].primitives[0].targets = [];
+  });
+  await validateScanAsset(new Blob([buffer]), "glb");
+});
+
 test("decoded image dimensions are budgeted before a decoder is invoked", async (context) => {
   const parse = context.mock.method(GLTFLoader.prototype, "parseAsync", () => { throw Error("Parser must not run"); });
   const png = Buffer.alloc(24);

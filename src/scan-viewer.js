@@ -13,6 +13,7 @@ const sameScan = (left, right) => left?.id === right?.id &&
 
 export async function openScanViewer(locationId, api) {
   const openScope = api.getScope?.() || null;
+  const openedUrl = window.location.href;
   const { esc } = api,
     location = api.getState().locations.find((l) => l.id === locationId);
   if (!location) return;
@@ -123,6 +124,9 @@ export async function openScanViewer(locationId, api) {
     }
     dialog.close();
   };
+  const onNavigation = () => {
+    if (window.location.href !== openedUrl) close();
+  };
   function cleanup() {
     closed = true;
     epoch++;
@@ -134,8 +138,8 @@ export async function openScanViewer(locationId, api) {
     renderer?.dispose();
     renderer?.forceContextLoss();
     dialog.remove();
-    window.removeEventListener("hashchange", close);
-    window.removeEventListener("popstate", close);
+    window.removeEventListener("hashchange", onNavigation);
+    window.removeEventListener("popstate", onNavigation);
     api.onClose?.();
   }
   dialog.addEventListener("close", cleanup, { once: true });
@@ -146,8 +150,8 @@ export async function openScanViewer(locationId, api) {
     }
   });
   dialog.querySelector("[data-close-scan]").onclick = close;
-  window.addEventListener("hashchange", close);
-  window.addEventListener("popstate", close);
+  window.addEventListener("hashchange", onNavigation);
+  window.addEventListener("popstate", onNavigation);
   function setBusy(value) {
     busy = value;
     if (stale) return;

@@ -207,6 +207,7 @@ test("backup export preserves shared assets and restore rejects conflicting dupl
     inventory.scans = inventory.locations.map((location) => ({
       id: `scan-${location.id}`, assetId: "shared", locationId: location.id, name: "room.obj", format: "obj",
     }));
+    localStorage.setItem("haven-inventory", JSON.stringify(inventory));
     await putAsset("shared", new Blob([obj]), null);
     const blob = await createBackupBlob(inventory, null);
     const backup = JSON.parse(await blob.text());

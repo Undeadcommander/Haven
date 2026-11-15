@@ -250,8 +250,11 @@ export function setupAccount(api) {
             throw Error("Your inventory changed during the copy. Please try again.");
           sync.saveLocal(merged.inventory);
           committed = true;
-          await staged.commit?.();
+          // Publish the saved view before asynchronous lease cleanup. Session
+          // changes or newer edits during cleanup must keep their own view.
           api.replace(merged.inventory);
+          if (staged.commit) await staged.commit().catch(() => {});
+          if (user?.uid !== uid || authEpoch !== epoch) return;
           problem = "";
           update();
         } catch (error) {

@@ -1,5 +1,7 @@
 // Inventory metadata stays small; binary room scans live in IndexedDB.
 import { createLocationTree } from "./location-tree.js";
+// Colons separate account scopes from asset IDs in browser storage.
+export const validAssetId = (id) => typeof id === "string" && id.length > 0 && !id.includes(":");
 export function pruneScanLinks(state) {
   const { byId: locations, contains } = createLocationTree(state.locations);
   const items = new Map(state.items.map((i) => [i.id, i]));
@@ -91,7 +93,7 @@ export function validScanData(state) {
       (s) =>
         s &&
         typeof s.id === "string" &&
-        typeof s.assetId === "string" &&
+        validAssetId(s.assetId) &&
         typeof s.name === "string" &&
         typeof s.locationId === "string" &&
         ["glb", "obj", "points"].includes(s.format),

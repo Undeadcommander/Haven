@@ -71,6 +71,17 @@ test("moving an item changes its location and clears old coordinates without del
   assert.throws(() => transferItem(s, "keys", "missing"));
   assert.equal(transferItem(s, "keys", "drawer"), s);
 });
+
+test("inventory validation rejects asset IDs that can alias account storage keys", () => {
+  for (const assetId of ["", "alice:asset", ":asset", "alice:", null, 42]) {
+    const inventory = fixture();
+    inventory.scans[0].assetId = assetId;
+    assert.equal(validState(inventory), false, `accepted asset ID ${assetId}`);
+  }
+  const inventory = fixture();
+  inventory.scans[0].assetId = "portable-shared-asset";
+  assert.equal(validState(inventory), true);
+});
 test("deleting a subtree removes its scan and linked markers without affecting inventory elsewhere", () => {
   const s = fixture();
   s.locations = s.locations.filter((l) => l.id !== "drawer");

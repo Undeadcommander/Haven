@@ -56,7 +56,9 @@ test("pending scan removals retain the account base across reload and concurrent
   const reloaded = controller(remote, store).sync;
   await reloaded.select("alice");
   await reloaded.receive({ revision: 1 });
-  assert.deepEqual([...reloaded.retainedAssetIds], ["old-file"]);
+  // Until the pending version is reconciled, cleanup is conservatively paused.
+  assert.equal(reloaded.retainedAssetIds, null);
+  assert.deepEqual(reloaded.record.baseAssets, ["old-file"]);
   await reloaded.select(null);
   const upload = sync.flush();
   const next = edited("Edited during upload");

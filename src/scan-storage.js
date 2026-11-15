@@ -1,3 +1,6 @@
+import { validAssetId } from "./scan-data.js";
+import { validState } from "./store.js";
+
 let database;
 function open() {
   if (!database)
@@ -20,8 +23,8 @@ function open() {
 async function transaction(mode, operation) {
   const db = await open();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction("assets", mode),
-      request = operation(tx.objectStore("assets"));
+    const tx = db.transaction("assets", mode);
+    let request;
     tx.oncomplete = () => resolve(request?.result);
     tx.onerror = tx.onabort = () =>
       reject(
@@ -29,6 +32,12 @@ async function transaction(mode, operation) {
           "Could not save the scan. Browser storage may be full or unavailable.",
         ),
       );
+    try {
+      request = operation(tx.objectStore("assets"));
+    } catch (error) {
+      tx.abort();
+      reject(error);
+    }
   });
 }
 let activeScope = null;
@@ -36,7 +45,10 @@ export const setAssetScope = (scope) => {
   activeScope = scope;
 };
 export const getAssetScope = () => activeScope;
-const key = (id, scope) => (scope ? `${scope}:${id}` : id);
+const key = (id, scope) => {
+  if (!validAssetId(id)) throw Error("A scan file ID is invalid. Choose a backup with valid scan file IDs.");
+  return scope ? `${scope}:${id}` : id;
+};
 // Array keys cannot collide with the string keys used for scan files.
 const ownerKey = (id, scope) => ["backup-owner", key(id, scope)];
 const STAGING_LIFETIME = 60 * 60 * 1000;
@@ -69,7 +81,9 @@ export async function reconcileAssets(retainedIds, scope = activeScope) {
     request.onsuccess = () => {
       const cursor = request.result;
       if (!cursor) return;
-      const retained = retainedIds();
+      let retained;
+      try { retained = retainedIds(); }
+      catch { tx.abort(); return; }
       if (!retained) return;
       const assetKey = cursor.key;
       const prefix = scope ? `${scope}:` : "";
@@ -81,6 +95,14 @@ export async function reconcileAssets(retainedIds, scope = activeScope) {
       }
       const owner = store.get(["backup-owner", assetKey]);
       owner.onsuccess = () => {
+        // Storage events are asynchronous. A different tab may already have
+        // committed a portable ID before this tab learns about its inventory.
+        const persisted = persistedAssetIds(scope);
+        if (!persisted) return;
+        if (persisted.has(assetKey.slice(prefix.length))) {
+          cursor.continue();
+          return;
+        }
         const expiry = owner.result?.expiresAt || 0;
         if (expiry > Date.now()) nextExpiry = Math.min(nextExpiry, expiry);
         else {
@@ -242,8 +264,9 @@ async function stageAsset(id, blob, scope, owner) {
             failure = comparison.error || Error("A scan file ID already exists with different content. Restore cannot overwrite it.");
             tx.abort();
           } else {
-            // A later restore depends on this file; disarm earlier rollback.
-            store.delete(ownerKey(id, scope));
+            // A later restore depends on this file; disarm earlier rollback,
+            // but keep a lease until either restore commits or it expires.
+            store.put(stagingOwner(null), ownerKey(id, scope));
           }
           return;
         }
@@ -257,6 +280,36 @@ async function stageAsset(id, blob, scope, owner) {
     };
   });
 }
+const retainedSnapshots = new Map();
+function persistedAssetIds(scope) {
+  try {
+    const raw = localStorage.getItem(scope ? `haven-account:${scope}` : "haven-inventory");
+    const recovery = scope ? localStorage.getItem(`haven-recovery:${scope}`) : null;
+    const cached = retainedSnapshots.get(scope);
+    if (cached && cached.raw === raw && cached.recovery === recovery) return cached.retained;
+    const record = raw ? JSON.parse(raw) : null;
+    const inventory = scope ? record?.inventory : record;
+    if (raw && !validState(inventory)) return null;
+    const retained = new Set((inventory?.scans || []).map((scan) => scan.assetId));
+    if (scope) {
+      // Pending edits and recovery copies can still restore the account version.
+      if (record?.dirty) {
+        if (!Array.isArray(record.baseAssets)) return null;
+        for (const id of record.baseAssets) retained.add(id);
+      }
+      if (recovery) {
+        const saved = JSON.parse(recovery);
+        if (!validState(saved)) return null;
+        for (const scan of saved.scans || []) retained.add(scan.assetId);
+      }
+    }
+    retainedSnapshots.set(scope, { raw, recovery, retained });
+    return retained;
+  } catch {
+    // Keep the staging lease if committed references cannot be checked safely.
+    return null;
+  }
+}
 async function rollbackStaged(created, scope, owner) {
   if (!created.length) return;
   await transaction("readwrite", (store) => {
@@ -264,6 +317,14 @@ async function rollbackStaged(created, scope, owner) {
       const request = store.get(ownerKey(id, scope));
       request.onsuccess = () => {
         if (request.result?.owner === owner) {
+          // Another tab or a cloud update may have adopted this portable ID.
+          // Read persisted metadata when the queued deletion actually runs.
+          const retained = persistedAssetIds(scope);
+          if (!retained) return;
+          if (retained.has(id)) {
+            store.delete(ownerKey(id, scope));
+            return;
+          }
           store.delete(key(id, scope));
           store.delete(ownerKey(id, scope));
         }
@@ -274,10 +335,12 @@ async function rollbackStaged(created, scope, owner) {
 export async function stageBackup(backup, scope = activeScope) {
   const inventory = structuredClone(backup.inventory),
     created = [];
+  for (const scan of inventory.scans || []) key(scan.assetId, scope);
   const assets = new Map();
   for (const asset of backup.assets) {
     if (!asset || typeof asset.id !== "string" || typeof asset.data !== "string")
       throw Error("A scan file is missing or invalid in this backup.");
+    key(asset.id, scope);
     if (assets.has(asset.id) && assets.get(asset.id) !== asset.data)
       throw Error("This backup contains conflicting copies of a scan file.");
     assets.set(asset.id, asset.data);
@@ -285,19 +348,21 @@ export async function stageBackup(backup, scope = activeScope) {
   const owner = crypto.randomUUID();
   const rollback = () => rollbackStaged(created, scope, owner);
   try {
-    const validate = inventory.scans?.length
-      ? (await import("./scan-model.js")).validateScanAsset : null;
-    const staged = new Set();
+    const formatsByAsset = new Map();
     for (const scan of inventory.scans || []) {
-      const data = assets.get(scan.assetId);
-      const blob = decodeAsset(data);
+      if (!formatsByAsset.has(scan.assetId)) formatsByAsset.set(scan.assetId, new Set());
+      formatsByAsset.get(scan.assetId).add(scan.format);
+    }
+    const validate = formatsByAsset.size
+      ? (await import("./scan-model.js")).validateScanAsset : null;
+    for (const [assetId, formats] of formatsByAsset) {
+      const blob = decodeAsset(assets.get(assetId));
       // Use the same parser and geometry checks as normal scan import, before
-      // any inventory can be replaced. Validation does not create a renderer.
-      await validate(blob, scan.format);
-      if (!staged.has(scan.assetId)) {
-        if (await stageAsset(scan.assetId, blob, scope, owner)) created.push(scan.assetId);
-        staged.add(scan.assetId);
-      }
+      // any inventory can be replaced. Shared files still need validation for
+      // each distinct format, but not for every reference to that format. Only
+      // keep one decoded file in flight instead of caching every decoded blob.
+      for (const format of formats) await validate(blob, format);
+      if (await stageAsset(assetId, blob, scope, owner)) created.push(assetId);
     }
     return {
       inventory,

@@ -1,10 +1,25 @@
-# 3D scanner bug check
+# 3D scanner bug check and fixes
 
-Reviewed 2026-11-15 using three parallel Orchestrator V2 review agents, followed by parent review of the findings and relevant code. **16 distinct issues found: 15 P2 and 1 P3. Two were addressed by concurrent workspace edits before handback, leaving 14 open (13 P2 and 1 P3).** The duplicate finding about synced markers was counted once. This review added only this report; application changes came from concurrent work.
+Reviewed 2026-11-15 using three parallel Orchestrator V2 review agents, followed by parent review of the findings and relevant code. **All 16 findings are now addressed.** The user subsequently requested implementation by the parent agent, without additional delegation. The existing concurrent restore safeguards were preserved and verified. The duplicate finding about synced markers was counted once.
+
+## Implemented changes
+
+| Findings | Resolution | Current implementation |
+| --- | --- | --- |
+| 1, 3 | Preserve portable asset IDs, deduplicate staged files, reject collisions, and abort stale restores without deleting files adopted by another inventory. | [scan-storage.js](<C:/T3 Code Projects/Item-finder/src/scan-storage.js>), [main.js](<C:/T3 Code Projects/Item-finder/src/main.js>) |
+| 2, 6 | Replace eager deletion with scoped reconciliation. Retain active files, the last account version while edits are pending, and recovery copies. Protect staged imports with expiring leases, check persisted references from other tabs, and retry failed cleanup. | [account-sync.js](<C:/T3 Code Projects/Item-finder/src/account-sync.js>), [account.js](<C:/T3 Code Projects/Item-finder/src/account.js>), [scan-storage.js](<C:/T3 Code Projects/Item-finder/src/scan-storage.js>) |
+| 4, 5 | Reject unexpected XR session endings and abort on reference-space resets. Only Finish or point-cap completion exports a capture. | [capture-depth.js](<C:/T3 Code Projects/Item-finder/src/capture-depth.js>) |
+| 7 | Reconcile marker dots and details after same-scan updates, preserving draft inputs and updating existing-target choices. | [scan-viewer.js](<C:/T3 Code Projects/Item-finder/src/scan-viewer.js>) |
+| 8, 16 | Set the stage aspect before fitting, fit against both fields of view, and distinguish taps from orbit/multi-pointer gestures. Ignore navigation events queued before the viewer opened. | [scan-viewer.js](<C:/T3 Code Projects/Item-finder/src/scan-viewer.js>) |
+| 9, 10 | Validate rendering attribute sizes, counts and finite values, then recompute geometry and instance bounds from coordinates. | [scan-model.js](<C:/T3 Code Projects/Item-finder/src/scan-model.js>) |
+| 11, 12, 13 | Reject external resources, budget decoded PNG/JPEG/WebP pixels before decoding, explicitly propagate decode failures, and revoke fallback image URLs on every outcome. | [scan-images.js](<C:/T3 Code Projects/Item-finder/src/scan-images.js>), [scan-limits.js](<C:/T3 Code Projects/Item-finder/src/scan-limits.js>), [scan-model.js](<C:/T3 Code Projects/Item-finder/src/scan-model.js>) |
+| 14, 15 | Load only the default static room scene and cap expanded renderables/material groups in both GLB and OBJ imports. | [scan-limits.js](<C:/T3 Code Projects/Item-finder/src/scan-limits.js>), [scan-model.js](<C:/T3 Code Projects/Item-finder/src/scan-model.js>) |
+
+The finding descriptions below preserve the original triggers and evidence; their quoted line ranges refer to the code at review time, before these fixes.
 
 P2 indicates a functional, data-integrity, or resource-management bug worth fixing; P3 indicates a smaller interaction defect. No P1 issue was established. The order below puts data preservation first.
 
-## Findings
+## Original findings
 
 ### 1. P2 — Restore overwrites cloud edits received during staging
 
@@ -138,15 +153,16 @@ While Place marker is enabled, the canvas click handler accepts the click genera
 
 A real Playwright mouse drag of 65 × 20 pixels opened the context menu and changed aria-pressed to false. Track pointer movement and accept placement only below a tap/click movement threshold; exclude multi-touch gestures.
 
-## Validation and limits
+## Final validation and limits
 
-- Latest delegated unit run: `node --test --test-reporter=spec tests/*.test.js` — **63 passed**. Earlier runs passed 61 tests before concurrent workspace changes added coverage.
-- Latest delegated browser run: scans, scanner-safety, review-regressions, account, and memory-management suites — **40 passed**, using installed Edge and an isolated review configuration.
-- Parent production build: `vite build` — passed, with chunk-size warnings.
-- Additional parent verification after concurrent fixes: backup-assets and backup-session suites — **5 passed, 1 failed**. Portable IDs, cloud replacement during staging, and rollback coverage passed. The failing same-account external-change test timed out trying to click Restore after the storage event removed its confirmation dialog; it does not establish a recurrence of the overwrite bug. That concurrent test needs to account for dialog invalidation. An initial run could not connect because the isolated server had stopped; the quoted results are from the rerun after starting it.
-- Existing passing suites do not cover all open findings above. This review did not add application fixes or permanent regression tests; concurrent work added the restore fixes and their tests.
-- WebXR lifecycle/reference-space cases used mocks, not physical depth hardware. Cloud transport was mocked; account subscriptions and browser storage paths ran through application code.
-- The shared workspace changed concurrently. Agents rechecked their findings against the updated scanner paths. Unrelated user work was not modified by this review.
+- `node --test --test-timeout=10000 --test-reporter=spec tests/*.test.js` — **74 passed, 0 failed**.
+- Playwright scans, scanner-safety, scanner-regressions, review-regressions, account, memory-management, backup-assets, and backup-session suites — **58 passed, 0 failed**, using installed Edge and the isolated review configuration.
+- `vite build` — passed, with the existing chunk-size warnings. `git diff --check` passed.
+- Added permanent regression coverage for capture interruption/reset, pending account-file retention, false GLB bounds, invalid attributes, external/oversized textures, fallback URL cleanup, alternate-scene expansion, object limits, cloud marker updates with draft preservation, portrait fitting, orbit dragging, recovery export, orphan cleanup/retry, staging protection, and native image decoding.
+- Regression files: [scan-model.test.js](<C:/T3 Code Projects/Item-finder/tests/scan-model.test.js>), [capture-depth.test.js](<C:/T3 Code Projects/Item-finder/tests/capture-depth.test.js>), [account-sync.test.js](<C:/T3 Code Projects/Item-finder/tests/account-sync.test.js>), and [scanner-regressions.spec.js](<C:/T3 Code Projects/Item-finder/e2e/scanner-regressions.spec.js>). Existing restore tests also cover concurrent safeguards.
+- WebXR lifecycle/reference-space cases used mocks, not physical depth hardware. Cloud transport was mocked; account subscriptions, browser storage, native image decoding, and rendered viewer interactions used application code.
+- Existing legacy dirty account records without a saved base-file list conservatively defer cleanup until their next successful reconciliation rather than risking deletion of a restorable file. Abandoned staging leases expire after one hour.
+- The shared workspace changed concurrently. The implementation preserves those changes, and the final checks ran against the combined scanner paths. No additional review agents were started for implementation.
 
 Reproduction artifacts:
 

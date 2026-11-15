@@ -103,6 +103,10 @@ test.describe("wide mobile photos", () => {
     const stage = await page.locator("[data-photo-stage]").boundingBox();
     expect(stage.height).toBeGreaterThanOrEqual(79);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+    const dialogBounds = await page.locator("#editor").boundingBox();
+    const pickerBounds = await page.locator(".location-image-picker").boundingBox();
+    expect(pickerBounds.x).toBeGreaterThanOrEqual(dialogBounds.x);
+    expect(pickerBounds.x + pickerBounds.width).toBeLessThanOrEqual(dialogBounds.x + dialogBounds.width);
     const box = await selection.boundingBox();
     expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y).hasAttribute("data-photo-selection"), {
       x: box.x + box.width / 2, y: box.y + box.height / 2,
@@ -126,6 +130,8 @@ test.describe("wide mobile photos", () => {
     expect(await cropRect(page)).toEqual(resized);
     const fitted = await page.locator("[data-photo-stage]").boundingBox();
     expect(fitted.height).toBeLessThan(44);
+    const workspace = await page.locator("[data-photo-viewport]").boundingBox();
+    expect(fitted.width).toBeLessThanOrEqual(workspace.width - 36);
     await drag(page, "n", 0, .1);
     expect((await cropRect(page)).top).toBeGreaterThan(resized.top + 8);
     const fittedCrop = await cropRect(page);

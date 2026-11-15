@@ -610,7 +610,7 @@ function importData() {
               await staged.rollback();
               throw Error("Could not save the restored inventory.");
             }
-            await staged.commit?.();
+            if (staged.commit) await staged.commit().catch(() => {});
             storageIssue = "";
             dialog.close();
             navigate();

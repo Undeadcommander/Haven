@@ -48,6 +48,13 @@ export function preflightGLB(buffer) {
   const costs = meshes.map((mesh) => {
     if (!Array.isArray(mesh?.primitives)) throw invalid();
     return mesh.primitives.reduce((total, primitive) => {
+      if (primitive.targets !== undefined) {
+        if (!Array.isArray(primitive.targets)) throw invalid();
+        // Room scans are static. Repeated morph accessors expand into large
+        // float textures at render time, outside the ordinary accessor budget.
+        if (primitive.targets.length)
+          throw Error("This scan contains morph targets. Export a static mesh without morph targets.");
+      }
       const positions = accessorCount(primitive.attributes?.POSITION);
       let drawn = primitive.indices === undefined ? positions : accessorCount(primitive.indices);
       if (primitive.mode === 5 || primitive.mode === 6) drawn = Math.max(0, drawn - 2) * 3;
