@@ -27,6 +27,7 @@
 
 .house-switcher__trigger,
 .house-switcher__add,
+.house-switcher__rename,
 .house-switcher__option {
   display: flex;
   align-items: center;
@@ -157,6 +158,12 @@
   min-width: 0;
   border-color: transparent;
   font-size: 13px;
+}
+
+.house-switcher__rename {
+  flex-shrink: 0;
+  justify-content: center;
+  margin-top: 9px;
 }
 
 .house-switcher__option[aria-current="true"] {

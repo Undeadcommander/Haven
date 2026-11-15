@@ -32,6 +32,76 @@ function lakeInventory() {
   return inventory;
 }
 
+test("renaming the current house preserves contents and selection across reloads", async ({ page }) => {
+  const inventory = { ...lakeInventory(), scans: [], markers: [] };
+  await seed(page, inventory);
+  await page.goto("/");
+  await chooseHouse(page, "Lake house");
+  await page.getByRole("button", { name: "Open Cabin", exact: true }).click();
+  const url = page.url();
+  await page.locator("[data-house-toggle]").click();
+  await page.getByRole("button", { name: "Rename house", exact: true }).click();
+  const dialog = page.locator("#editor");
+  const name = page.getByRole("textbox", { name: "House name" });
+  await expect(name).toHaveValue("Lake house");
+  await name.fill("Cancelled name");
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.locator("[data-house-name]")).toHaveText("Lake house");
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("haven-inventory")))).toEqual(inventory);
+
+  await page.locator("[data-house-toggle]").press("ArrowDown");
+  await page.getByRole("button", { name: "Rename house", exact: true }).press("Enter");
+  await name.fill('  <Cabin & "Lake">  ');
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(page.locator("[data-house-name]")).toHaveText('<Cabin & "Lake">');
+  await expect(page.locator(".breadcrumb [data-home]")).toHaveText('<Cabin & "Lake">');
+  await expect(page.locator("[data-house-toggle]")).toBeFocused();
+  expect(page.url()).toBe(url);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("haven-inventory")))).toEqual({
+    ...inventory,
+    houses: [inventory.houses[0], { id: "lake", name: '<Cabin & "Lake">' }],
+  });
+  await page.reload();
+  await expect(page.locator("[data-house-name]")).toHaveText('<Cabin & "Lake">');
+  await expect(page.locator("h1")).toHaveText("Cabin");
+  await page.locator("[data-house-toggle]").click();
+  await page.getByRole("button", { name: "Rename house", exact: true }).click();
+  await expect(name).toHaveValue('<Cabin & "Lake">');
+});
+
+test("renaming validates names and does not apply failed storage writes", async ({ page }) => {
+  await seed(page, lakeInventory());
+  await page.goto("/");
+  await chooseHouse(page, "Lake house");
+  await page.locator("[data-house-toggle]").click();
+  await page.getByRole("button", { name: "Rename house", exact: true }).click();
+  const dialog = page.locator("#editor");
+  const name = page.getByRole("textbox", { name: "House name" });
+  await expect(name).toHaveAttribute("maxlength", "80");
+  await name.fill(" my HOME ");
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog.locator("[data-settings-error]")).toContainText("already exists");
+  await name.fill("   ");
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog.locator("[data-settings-error]")).toContainText("name");
+  await page.evaluate(() => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function(key, value) {
+      if (key === "haven-inventory") throw Error("Storage full");
+      return original.call(this, key, value);
+    };
+  });
+  await name.fill("Unsaved name");
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog.locator("[data-settings-error]")).toContainText("Could not save");
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.locator("[data-house-name]")).toHaveText("Lake house");
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("haven-inventory")).houses[1].name)).toBe("Lake house");
+  await chooseHouse(page, "My home");
+  await chooseHouse(page, "Lake house");
+});
+
 test("legacy inventory stays intact while users create and switch isolated houses", async ({ page }) => {
   const legacy = initialState();
   legacy.items.push({ id: "keys", locationId: "living-room", name: "Home keys", notes: "" });
@@ -248,16 +318,21 @@ test("accounts and guests keep separate house collections and selection without 
   await page.evaluate(async () => { await window.changeHouseAuth({ uid: "alice", displayName: "Alice" }); });
   await expect(page.locator("[data-house-name]")).toHaveText("My home");
   await createHouse(page, "City house");
+  await page.locator("[data-house-toggle]").click();
+  await page.getByRole("button", { name: "Rename house", exact: true }).click();
+  await page.getByRole("textbox", { name: "House name" }).fill("City apartment");
+  await page.locator("#editor").getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.locator("[data-house-name]")).toHaveText("City apartment");
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("haven-account:alice"))?.dirty)).toBe(false);
   const saved = await page.evaluate(() => localStorage.getItem("haven-account:alice"));
   await chooseHouse(page, "My home");
-  await chooseHouse(page, "City house");
+  await chooseHouse(page, "City apartment");
   expect(await page.evaluate(() => localStorage.getItem("haven-account:alice"))).toBe(saved);
   await page.evaluate(async () => { await window.changeHouseAuth(null); });
   await expect(page.locator("[data-house-name]")).toHaveText("Lake house");
   await expect(page.getByRole("button", { name: "Open Cabin", exact: true })).toBeVisible();
   await page.evaluate(async () => { await window.changeHouseAuth({ uid: "alice", displayName: "Alice" }); });
-  await expect(page.locator("[data-house-name]")).toHaveText("City house");
+  await expect(page.locator("[data-house-name]")).toHaveText("City apartment");
   await expect(page.locator(".room-card")).toHaveCount(0);
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem("haven-inventory")).houses.map((house) => house.name))).toEqual(["My home", "Lake house"]);
 });

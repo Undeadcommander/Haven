@@ -78,14 +78,30 @@ export function replaceHouseInventory(inventory, houseId, next) {
   };
 }
 
-export function addHouse(inventory, name, id = crypto.randomUUID()) {
-  const normalized = withHouses(inventory);
+function houseName(houses, name, excludedId) {
   const trimmed = name.trim();
   if (!trimmed || trimmed.length > MAX_HOUSE_NAME_LENGTH)
     throw Error(`Give your house a name of 1–${MAX_HOUSE_NAME_LENGTH} characters.`);
-  if (normalized.houses.some((house) => house.name.toLowerCase() === trimmed.toLowerCase()))
+  if (houses.some((house) => house.id !== excludedId && house.name.toLowerCase() === trimmed.toLowerCase()))
     throw Error("A house with that name already exists. Choose a different name.");
+  return trimmed;
+}
+
+export function addHouse(inventory, name, id = crypto.randomUUID()) {
+  const normalized = withHouses(inventory);
+  const trimmed = houseName(normalized.houses, name);
   if (typeof id !== "string" || !id.trim() || normalized.houses.some((house) => house.id === id))
     throw Error("Could not create this house. Please try again.");
   return { ...normalized, houses: [...normalized.houses, { id, name: trimmed }] };
+}
+
+export function renameHouse(inventory, id, name) {
+  const normalized = withHouses(inventory);
+  if (!normalized.houses.some((house) => house.id === id))
+    throw Error("This house no longer exists. Choose another house.");
+  const trimmed = houseName(normalized.houses, name, id);
+  return {
+    ...normalized,
+    houses: normalized.houses.map((house) => house.id === id ? { ...house, name: trimmed } : house),
+  };
 }

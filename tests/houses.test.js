@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { initialState, validState, createIndex, searchInventory } from "../src/store.js";
-import { addHouse, withHouses, inventoryForHouse, replaceHouseInventory, DEFAULT_HOUSE_ID } from "../src/houses.js";
+import { addHouse, renameHouse, withHouses, inventoryForHouse, replaceHouseInventory, DEFAULT_HOUSE_ID } from "../src/houses.js";
 import { mergeGuestInventory, AccountSync, accountKey } from "../src/account-sync.js";
 import { encodeInventory, decodeInventory } from "../src/firestore-inventory.js";
 
@@ -51,6 +51,41 @@ test("houses have no fixed count limit and new houses start empty", () => {
   assert.throws(() => addHouse(inventory, "   "), /name/);
   assert.throws(() => addHouse(inventory, "x".repeat(81)), /name/);
   assert.throws(() => addHouse(inventory, "Duplicate ID", "house-1"), /try again/);
+});
+
+test("renaming houses preserves IDs, ownership, contents, and the original inventory", () => {
+  const inventory = twoHouses();
+  const before = structuredClone(inventory);
+  const renamed = renameHouse(inventory, "lake", "  Mountain cabin  ");
+  assert.deepEqual(renamed, {
+    ...inventory,
+    houses: [{ id: DEFAULT_HOUSE_ID, name: "My home" }, { id: "lake", name: "Mountain cabin" }],
+  });
+  assert.equal(validState(renamed), true);
+  assert.deepEqual(inventory, before);
+  assert.deepEqual(renameHouse(inventory, "lake", "Lake house"), inventory);
+  assert.equal(renameHouse(inventory, "lake", "LAKE HOUSE").houses[1].name, "LAKE HOUSE");
+  assert.equal(renameHouse(inventory, "lake", "x".repeat(80)).houses[1].name.length, 80);
+});
+
+test("house renaming rejects invalid names and missing houses without changing inventory", () => {
+  const inventory = twoHouses();
+  const before = structuredClone(inventory);
+  for (const name of ["", "   ", "x".repeat(81)])
+    assert.throws(() => renameHouse(inventory, "lake", name), /name/);
+  assert.throws(() => renameHouse(inventory, "lake", " my HOME "), /already exists/);
+  assert.throws(() => renameHouse(inventory, "missing", "New house"), /no longer exists/);
+  assert.deepEqual(inventory, before);
+});
+
+test("legacy inventory can rename My home without changing room IDs or mutating the original", () => {
+  const legacy = initialState();
+  const before = structuredClone(legacy);
+  const renamed = renameHouse(legacy, DEFAULT_HOUSE_ID, "Family home");
+  assert.equal(validState(renamed), true);
+  assert.deepEqual(renamed.houses, [{ id: DEFAULT_HOUSE_ID, name: "Family home" }]);
+  assert.deepEqual(renamed.locations, withHouses(legacy).locations);
+  assert.deepEqual(legacy, before);
 });
 
 test("house views isolate nested spaces, search, items, scans, and markers", () => {
@@ -125,7 +160,7 @@ test("copying guest data preserves separate houses and remaps ownership and scan
 });
 
 test("cloud chunks and account caches retain the full collection and inactive assets", async () => {
-  const inventory = twoHouses();
+  const inventory = renameHouse(twoHouses(), "lake", "Mountain cabin");
   const strings = encodeInventory(inventory);
   const decoded = decodeInventory(
     { snapshotId: "houses", chunkCount: strings.length },

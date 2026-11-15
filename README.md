@@ -31,6 +31,8 @@ Use the house picker in the header to switch houses or choose **Add house**. Giv
 
 Existing inventory stays in **My home**. Each house has its own rooms, nested containers, items, search results, and scan markers. The last selected house is remembered on this device separately for guest mode and each account. Switching houses does not change inventory or trigger a cloud save.
 
+To rename a house, switch to it, open the house picker, and choose **Rename house**. Edit the prefilled name and select **Save**. Names must be unique (ignoring case) and 1–80 characters long. Renaming preserves the house's rooms, items, scans, and current selection, and saves through the same device or account sync as other edits.
+
 Backups include **all houses** and their locally available scan files. Restoring replaces the entire collection after confirmation; older single-home backups are still supported. Account sync includes every house, and copying device inventory into an account adds separate houses without mixing their contents into existing houses.
 
 If guest inventory cannot be loaded, ordinary edits are blocked rather than replacing the saved value with sample data. Export saves the original raw metadata as a `haven-raw-recovery-*.json` file; it is not a full scan backup and may need repair before restoring. Reload retries loading, and an explicit, confirmed restore can replace the unreadable value. Browser history remembers house context, and existing room links select the house that owns the room.

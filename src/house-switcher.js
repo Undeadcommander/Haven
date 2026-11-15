@@ -29,11 +29,12 @@ export function houseSwitcherMarkup({ houses, activeHouseId }) {
       <input class="house-switcher__search" id="${id}-search" data-house-search type="search" placeholder="Find a house…" autocomplete="off" spellcheck="false" aria-controls="${id}-list" aria-describedby="${id}-status">
       <p class="house-switcher__status" id="${id}-status" data-house-status role="status" aria-live="polite" aria-atomic="true">${houses.length ? `${houses.length} house${houses.length === 1 ? "" : "s"}` : "No houses yet. Use Add house to get started."}</p>
       <ul class="house-switcher__list" id="${id}-list" data-house-list aria-label="Houses">${houses.map((house, index) => `<li data-house-row><button class="house-switcher__option" type="button" data-house-option="${index}"${house.id === activeHouseId ? ' aria-current="true"' : ""} title="${escapeHtml(house.name)}"><span class="house-switcher__name">${escapeHtml(house.name)}</span><span class="house-switcher__check" aria-hidden="true">✓</span></button></li>`).join("")}</ul>
+      <button class="house-switcher__rename" type="button" data-house-rename${activeHouse ? "" : " disabled"}>Rename house</button>
     </div>
   </div>`;
 }
 
-export function bindHouseSwitcher({ root, houses, activeHouseId, onSelect, onAdd }) {
+export function bindHouseSwitcher({ root, houses, activeHouseId, onSelect, onAdd, onRename }) {
   const control = root.matches?.("[data-house-switcher]")
     ? root
     : root.querySelector("[data-house-switcher]");
@@ -51,6 +52,7 @@ export function bindHouseSwitcher({ root, houses, activeHouseId, onSelect, onAdd
   const window = document.defaultView;
   let selectCallback = onSelect;
   let addCallback = onAdd;
+  let renameCallback = onRename;
   let disposed = false;
   let open = false;
 
@@ -138,6 +140,9 @@ export function bindHouseSwitcher({ root, houses, activeHouseId, onSelect, onAdd
     } else if (button.matches("[data-house-add]")) {
       close(true);
       addCallback?.();
+    } else if (button.matches("[data-house-rename]")) {
+      close(true);
+      renameCallback?.();
     } else if (button.matches("[data-house-option]")) {
       const house = records[Number(button.dataset.houseOption)];
       if (!house || button.closest("[data-house-row]").hidden) return;
@@ -188,6 +193,7 @@ export function bindHouseSwitcher({ root, houses, activeHouseId, onSelect, onAdd
     search.removeEventListener("input", filterHouses);
     selectCallback = null;
     addCallback = null;
+    renameCallback = null;
     if (bindings.get(control) === cleanup) bindings.delete(control);
   }
 

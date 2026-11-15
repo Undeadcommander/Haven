@@ -7,7 +7,7 @@ import { setupInventoryDrag } from "./inventory-drag.js";
 import { setupAccount } from "./account.js";
 import { houseSwitcherMarkup, bindHouseSwitcher } from "./house-switcher.js";
 import "./house-switcher.css";
-import { addHouse, withHouses, inventoryForHouse, replaceHouseInventory, MAX_HOUSE_NAME_LENGTH } from "./houses.js";
+import { addHouse, renameHouse, withHouses, inventoryForHouse, replaceHouseInventory, MAX_HOUSE_NAME_LENGTH } from "./houses.js";
 import { pruneScanLinks, transferItem, transferContainer } from "./scan-data.js";
 import {
   createBackupBlob,
@@ -154,26 +154,34 @@ function selectHouse(id) {
     : "House switched for this session. Browser storage is unavailable.");
   return remembered;
 }
-function createHouse() {
+function editHouse(houseId = null) {
+  const house = inventory.houses.find((entry) => entry.id === houseId);
   modal(
-    "Add a house",
-    "Keep each house’s rooms, containers, items, and scans in its own space. Switch houses anytime from the header.",
-    `<label>House name<input name="name" required maxlength="${MAX_HOUSE_NAME_LENGTH}" placeholder="e.g. Lake house" autocomplete="off"></label><p class="warning" data-settings-error role="alert" hidden></p>`,
+    house ? "Rename house" : "Add a house",
+    house ? "Choose a new name. All rooms, containers, items, and scans stay in this house."
+      : "Keep each house’s rooms, containers, items, and scans in its own space. Switch houses anytime from the header.",
+    `<label>House name<input name="name" required maxlength="${MAX_HOUSE_NAME_LENGTH}" placeholder="e.g. Lake house" value="${esc(house?.name || "")}" autocomplete="off"></label><p class="warning" data-settings-error role="alert" hidden></p>`,
     (data, dialog) => {
       try {
-        const id = crypto.randomUUID();
-        const next = addHouse(inventory, data.get("name"), id);
+        const id = house ? house.id : crypto.randomUUID();
+        const next = house ? renameHouse(inventory, id, data.get("name")) : addHouse(inventory, data.get("name"), id);
         if (!saveInventory(next)) {
           showSettingsError(dialog, "Could not save this house. Please try again.");
           return;
         }
         dialog.close();
+        if (house) {
+          render();
+          root.querySelector("[data-house-toggle]")?.focus();
+          toast("House renamed.");
+          return;
+        }
         if (selectHouse(id)) toast("Your new house is ready. Add a room to get started.");
       } catch (error) {
         showSettingsError(dialog, error.message);
       }
     },
-    "Add house",
+    house ? "Save" : "Add house",
   );
 }
 function navigate(id = null, itemId = null) {
@@ -249,7 +257,8 @@ function itemSection(items, all) {
 }
 function bind() {
   unbindHouseSwitcher = bindHouseSwitcher({
-    root, houses: inventory.houses, activeHouseId, onSelect: selectHouse, onAdd: createHouse,
+    root, houses: inventory.houses, activeHouseId, onSelect: selectHouse,
+    onAdd: () => editHouse(), onRename: () => editHouse(activeHouseId),
   });
   account.bind();
   root.querySelectorAll("[data-item-page]").forEach((button) => {
