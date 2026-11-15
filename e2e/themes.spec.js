@@ -1,6 +1,6 @@
 import { test, expect } from "./fixture.js";
 
-const themes = ["light", "dark", "oled", "grey", "rose", "aqua"];
+const themes = ["light", "dark", "oled", "grey", "rose", "aqua", "midnight", "plum", "linen", "lavender"];
 
 test("themes persist and keep add tiles in sync across navigation and hover", async ({ page }) => {
   await page.goto("/");
@@ -8,6 +8,8 @@ test("themes persist and keep add tiles in sync across navigation and hover", as
   for (const theme of [...themes, "dark", "light"]) {
     await picker.selectOption(theme);
     await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+    const scheme = ["dark", "oled", "grey", "midnight", "plum"].includes(theme) ? "dark" : "light";
+    await expect(page.locator("html")).toHaveAttribute("data-color-scheme", scheme);
     const colors = await page.evaluate(() => {
       const style = (selector) => getComputedStyle(document.querySelector(selector));
       return {
@@ -31,6 +33,7 @@ test("themes persist and keep add tiles in sync across navigation and hover", as
     await page.reload();
     await expect(picker).toHaveValue(theme);
     await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+    await expect(page.locator("html")).toHaveAttribute("data-color-scheme", scheme);
     await page.getByRole("button", { name: "Open Living room", exact: true }).click();
     await expect(picker).toHaveValue(theme);
     await expect(page.getByRole("button", { name: "Add a container" })).toBeVisible();

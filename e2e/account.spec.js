@@ -39,7 +39,7 @@ test("unconfigured sign-in is honest and leaves guest inventory available", asyn
     "not available yet",
   );
   await page.getByRole("button", { name: "Continue on this device" }).click();
-  await expect(page.locator(".room-card")).toHaveCount(1);
+  await expect(page.locator(".room-card")).toHaveCount(3);
 });
 
 test("signed-in avatar opens account settings and shows the profile photo on mobile", async ({ page }) => {

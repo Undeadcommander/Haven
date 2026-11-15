@@ -100,6 +100,66 @@
   --line: #bedde0;
   --scan-bg: #dceff0;
 }
+[data-theme="midnight"] {
+  --page: #141c2e;
+  --surface: #1e2940;
+  --surface-soft: #25324b;
+  --header: #182237;
+  --ink: #e5ecfa;
+  --muted-ink: #b0bfd9;
+  --input: #182238;
+  --accent: #a9c5f5;
+  --on-accent: #182842;
+  --accent-hover: #c1d7fa;
+  --hover: #314463;
+  --line: #435777;
+  --scan-bg: #111a2b;
+}
+[data-theme="plum"] {
+  --page: #271d2b;
+  --surface: #34273b;
+  --surface-soft: #402f48;
+  --header: #2d2232;
+  --ink: #f3e7f4;
+  --muted-ink: #c9b3ce;
+  --input: #2b2031;
+  --accent: #dfb4de;
+  --on-accent: #342139;
+  --accent-hover: #edc9ec;
+  --hover: #533c5b;
+  --line: #674c6e;
+  --scan-bg: #241a29;
+}
+[data-theme="linen"] {
+  --page: #fcf8f0;
+  --surface: #fffdf8;
+  --surface-soft: #f1e9dc;
+  --header: #fdfaf4;
+  --ink: #4b3d2e;
+  --muted-ink: #756451;
+  --input: #fdfaf4;
+  --accent: #805b35;
+  --on-accent: #ffffff;
+  --accent-hover: #684726;
+  --hover: #e6dac6;
+  --line: #dfd2bd;
+  --scan-bg: #eee5d5;
+}
+[data-theme="lavender"] {
+  --page: #f8f5fd;
+  --surface: #fefcff;
+  --surface-soft: #eee7f7;
+  --header: #fbf8fe;
+  --ink: #42344f;
+  --muted-ink: #735e81;
+  --input: #fbf8fe;
+  --accent: #755297;
+  --on-accent: #ffffff;
+  --accent-hover: #60407f;
+  --hover: #e2d6f0;
+  --line: #d9c9e8;
+  --scan-bg: #eae1f3;
+}
 .theme-control {
   position: relative;
   flex-shrink: 0;
@@ -178,15 +238,14 @@ form input::placeholder, form textarea::placeholder { color: var(--muted-ink); }
 .primary:hover { background: var(--accent-hover); }
 .nav-link.selected, .nav-link:not(.active):hover,
 .icon-button:hover, .search-result:hover { background: var(--hover); }
-.stats, .tip, .secondary, .item-preview > span, .item-preview .empty-chip,
+.stats, .secondary, .item-preview > span, .item-preview .empty-chip,
 .section-heading h2 > span, .item-symbol {
   background: var(--surface-soft);
   border-color: var(--line);
   color: var(--muted-ink);
 }
-.stats > div, .stats strong, .stats .stats-note,
-.tip strong, .tip p, .tip > span { color: var(--muted-ink); }
-.tip-icon, .avatar {
+.stats > div, .stats strong, .stats .stats-note { color: var(--muted-ink); }
+.avatar {
   background: var(--hover);
   color: var(--accent);
   border-color: var(--line);

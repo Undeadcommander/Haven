@@ -1,6 +1,6 @@
 # Haven · Item finder
 
-A lightweight home inventory app. Start with one room, add rooms and nested containers, and record exactly where each item belongs. Search by item name, notes, or location; a result opens and highlights the item in its container.
+A lightweight home inventory app. Start with a living room, garage, and bathroom, add rooms and nested containers, and record exactly where each item belongs. Search by item name, notes, or location; a result opens and highlights the item in its container.
 
 ## Development - users ignore this and Checks
 
@@ -44,7 +44,7 @@ Inventory saved on a local preview does not automatically transfer to this URL; 
 
 Choose **Add item → Import existing item** or **Add a container → Import existing container** to move an existing entry into the current space. The picker shows full location paths. For items, you can change **Location** before opening the picker. Import moves the original; containers bring their nested contents and scans. Entries already directly in the destination are hidden, as are rooms and containers that would create a nesting loop. You can still create a new entry using the usual form.
 
-Use the color theme picker in the header to choose Light, Dark, OLED black, Dark grey, Rose, or Aqua. OLED black uses a pure black page and card background. The initial theme follows the device setting; an explicit choice is remembered. Each item has a Move button that can transfer it into any room or nested container. Moving an item clears its scan markers because the old coordinates no longer describe its position.
+Use the color theme picker in the header to choose Light, Dark, OLED black, Dark grey, Rose, Aqua, Midnight, Plum, Linen, or Lavender. Midnight and Plum offer dark palettes; Linen and Lavender offer light palettes. OLED black uses a pure black page and card background. The initial theme follows the device setting; an explicit choice is remembered. Each item has a Move button that can transfer it into any room or nested container. Moving an item clears its scan markers because the old coordinates no longer describe its position.
 
 Use the **gear** on any container card or item row to change its name, description, color, and destination without opening the container. Container destinations show the full path and exclude the container itself and everything inside it. The **Move container** button is also available inside a container.
 

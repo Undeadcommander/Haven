@@ -48,6 +48,7 @@ a:focus-visible {
   padding: 39px 23px;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
   z-index: 10;
 }
 .brand {
@@ -130,6 +131,7 @@ a:focus-visible {
 .room-nav {
   overflow: auto;
   max-height: 35vh;
+  flex-shrink: 0;
 }
 .room-dot {
   width: 8px;
@@ -613,44 +615,6 @@ main {
   margin: 0;
   color: #a5af98;
 }
-.tip {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  padding: 23px 25px;
-  border: 1px solid #e9eade;
-  background: #f8f8ee;
-  border-radius: 8px;
-  margin-top: 35px;
-}
-.tip-icon {
-  width: 40px;
-  height: 40px;
-  background: #efefdf;
-  color: #9ca579;
-  border-radius: 8px;
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-}
-.tip strong {
-  font-size: 12px;
-  font-weight: 500;
-  color: #7a8167;
-}
-.tip p {
-  font-size: 10px;
-  line-height: 1.8;
-  color: #a0a38d;
-  margin: 5px 0 0;
-}
-.tip > span {
-  font-size: 8px;
-  letter-spacing: 1.2px;
-  white-space: nowrap;
-  color: #adb195;
-  margin-left: auto;
-}
 footer {
   border-top: 1px solid var(--line);
   margin: 0 48px;
@@ -994,8 +958,7 @@ legend {
   .stats {
     gap: 24px;
   }
-  .stats .stats-note,
-  .tip > span {
+  .stats .stats-note {
     display: none;
   }
   .page-heading h1 {
@@ -1102,10 +1065,6 @@ legend {
   }
   .card-image {
     height: 145px;
-  }
-  .tip {
-    padding: 18px;
-    gap: 13px;
   }
   footer {
     margin: 0 20px;

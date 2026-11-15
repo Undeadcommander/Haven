@@ -28,7 +28,7 @@ test("move containers within and across rooms, preserving nested contents and se
   await move.click();
   const destination = page.getByLabel("Destination");
   await expect(destination.locator("option")).toHaveText([
-    "Living room (current)", "Living room / Shelf", "Office", "Office / Closet",
+    "Bathroom", "Garage", "Living room (current)", "Living room / Shelf", "Office", "Office / Closet",
   ]);
   await expect(page.locator('#editor [type="submit"]')).toBeDisabled();
   await destination.selectOption("office");

@@ -5,7 +5,7 @@ test("nested inventory, exact-location search, persistence, editing and deletion
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
-  await expect(page.locator(".room-card")).toHaveCount(1);
+  await expect(page.locator(".room-card")).toHaveCount(3);
   await page
     .getByRole("button", { name: "Open Living room", exact: true })
     .click();
@@ -70,7 +70,7 @@ test("mobile layout fits viewport and backup can be restored", async ({
     .getByRole("textbox", { name: "Name", exact: true })
     .fill("Kitchen");
   await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.locator(".room-card")).toHaveCount(2);
+  await expect(page.locator(".room-card")).toHaveCount(4);
   await page.screenshot({
     path: "test-results/mobile.png",
     fullPage: true,
@@ -87,7 +87,7 @@ test("mobile layout fits viewport and backup can be restored", async ({
   await page.getByRole("button", { name: "Restore a backup" }).first().click();
   await (await chooser).setFiles("/tmp/haven-test-backup.json");
   await page.getByRole("button", { name: "Restore", exact: true }).click();
-  await expect(page.locator(".room-card")).toHaveCount(2);
+  await expect(page.locator(".room-card")).toHaveCount(4);
   await page.screenshot({
     path: "test-results/desktop.png",
     fullPage: true,

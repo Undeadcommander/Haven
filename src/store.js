@@ -13,6 +13,24 @@ export function initialState() {
           "The heart of the home. Keep track of the little things that make it yours.",
         color: "sage",
       },
+      {
+        id: "garage",
+        parentId: null,
+        name: "Garage",
+        description:
+          "A little room for big projects. Keep tools, gear, and weekend plans in their place.",
+        color: "blue",
+        image: "garage",
+      },
+      {
+        id: "bathroom",
+        parentId: null,
+        name: "Bathroom",
+        description:
+          "A little calm for your daily rituals. Keep everyday essentials close at hand.",
+        color: "sand",
+        image: "bathroom",
+      },
     ],
     items: [],
   };

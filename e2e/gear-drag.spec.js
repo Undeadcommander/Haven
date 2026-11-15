@@ -37,7 +37,7 @@ test("gear edits container details and destination without entering it, and item
   await page.getByRole("button", { name: "Settings for Cabinet", exact: true }).click();
   await expect(page.locator("h1")).toHaveText("Living room");
   await expect(page.getByLabel("Destination").locator("option")).toHaveText([
-    "Living room (current)", "Living room / Shelf", "Office", "Office / Closet",
+    "Bathroom", "Garage", "Living room (current)", "Living room / Shelf", "Office", "Office / Closet",
   ]);
   await page.getByRole("textbox", { name: "Name", exact: true }).fill("Media cabinet");
   await page.getByRole("textbox", { name: "Description" }).fill("Games and movies");

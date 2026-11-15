@@ -24,7 +24,7 @@ test("item images accept item presets and photos, reject unsafe sources, and sur
 test("location images validate and survive account snapshot encoding", () => {
   const state = initialState();
   assert.equal(validState(state), true);
-  for (const image of [null, "bedroom", "box", "data:image/jpeg;base64,/9j/AA=="]) {
+  for (const image of [null, "bedroom", "garage", "bathroom", "box", "data:image/jpeg;base64,/9j/AA=="]) {
     state.locations[0].image = image;
     assert.equal(validState(state), true);
     const payloads = encodeInventory(state);

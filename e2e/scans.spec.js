@@ -118,12 +118,12 @@ test("imported scan supports item and container markers, persistence, backup and
   const download = await downloadPromise;
   await download.saveAs("/tmp/haven-scans-backup.json");
   await page.locator("[data-add-root]").first().click();
-  await page.getByRole("textbox", { name: "Name", exact: true }).fill("Garage");
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("Workshop");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await page
     .getByRole("button", { name: "Move Spare keys", exact: true })
     .click();
-  await page.getByLabel("Destination").selectOption({ label: "Garage" });
+  await page.getByLabel("Destination").selectOption({ label: "Workshop" });
   await page.getByRole("button", { name: "Move item", exact: true }).click();
   await openViewer(page);
   await expect(page.locator(".scan-dot")).toHaveCount(1);

@@ -12,6 +12,45 @@ const background = `
 `;
 
 const scenes = {
+  bathroom: `
+    <path d="M110 108h132l-9 23q-4 11-17 11h-80q-13 0-17-11z" fill="currentColor" opacity=".29"/>
+    <path d="M120 113h112l-6 15q-2 6-10 6h-80q-8 0-10-6z" fill="white" opacity=".32"/>
+    <rect x="106" y="103" width="140" height="8" rx="4" fill="currentColor" opacity=".45"/>
+    <path d="M125 142v6m101-6v6M126 103V89q0-12 13-12h9v6" stroke="currentColor" stroke-width="3" opacity=".45"/>
+    <path d="M160 73h38" stroke="currentColor" stroke-width="3" opacity=".3"/>
+    <rect x="166" y="73" width="26" height="23" rx="3" fill="currentColor" opacity=".25"/>
+    <path d="M170 90h18" stroke="currentColor" stroke-width="2" opacity=".3"/>
+    <circle cx="278" cy="60" r="24" fill="currentColor" opacity=".2"/>
+    <circle cx="278" cy="60" r="20" fill="white" opacity=".38"/>
+    <path d="m268 59 11-11m-6 20 14-14" stroke="currentColor" stroke-width="2" opacity=".18"/>
+    <rect x="248" y="105" width="60" height="37" rx="3" fill="currentColor" opacity=".28"/>
+    <rect x="244" y="100" width="68" height="7" rx="3" fill="currentColor" opacity=".45"/>
+    <rect x="257" y="94" width="39" height="9" rx="4" fill="white" opacity=".5"/>
+    <path d="M276 94v-7q0-8 9-6m-7 29v29m-7-20v8m14-8v8m-31 15v6m48-6v6" stroke="currentColor" stroke-width="2" opacity=".4"/>
+    <rect x="299" y="88" width="8" height="12" rx="2" fill="currentColor" opacity=".3"/>
+    <path d="M303 88v-4h5" stroke="currentColor" stroke-width="2" opacity=".4"/>
+  `,
+  garage: `
+    <ellipse cx="182" cy="149" rx="125" ry="11" fill="currentColor" opacity=".08"/>
+    <path d="M48 144h264" stroke="currentColor" opacity=".12"/>
+    <rect x="60" y="31" width="143" height="111" rx="3" fill="currentColor" opacity=".08"/>
+    <path d="M57 143V29h149v114M61 60h141M61 81h141M61 102h141M61 123h141" stroke="currentColor" opacity=".24" stroke-width="2"/>
+    <path d="M73 40h30v12H73zm43 0h30v12h-30zm43 0h30v12h-30z" fill="white" opacity=".38"/>
+    <path d="m91 110 14-29h53l17 29" fill="currentColor" opacity=".29"/>
+    <path d="m108 87-9 20h65l-11-20z" fill="white" opacity=".4"/>
+    <rect x="82" y="106" width="101" height="30" rx="9" fill="currentColor" opacity=".42"/>
+    <path d="M90 134v9m85-9v9" stroke="currentColor" stroke-width="8" opacity=".5"/>
+    <path d="M91 117h14m56 0h13M117 127h30" stroke="white" stroke-width="3" opacity=".45"/>
+    <rect x="224" y="33" width="76" height="52" rx="3" fill="currentColor" opacity=".16"/>
+    <path d="M235 43h54m-54 11h54m-54 11h54m-54 11h54" stroke="currentColor" stroke-dasharray="1 8" opacity=".3" stroke-width="2"/>
+    <path d="M240 45v25m-4-25h8m16 1-5 9 5 8 5-8-5-9Zm0 17v10m20-24v24m-5-24h10" stroke="currentColor" opacity=".55" stroke-width="3"/>
+    <rect x="217" y="101" width="91" height="8" rx="3" fill="currentColor" opacity=".45"/>
+    <path d="M225 109v35m76-35v35" stroke="currentColor" stroke-width="4" opacity=".35"/>
+    <rect x="235" y="118" width="54" height="25" rx="3" fill="currentColor" opacity=".28"/>
+    <path d="M252 129h20" stroke="white" stroke-width="2" opacity=".45"/>
+    <rect x="239" y="88" width="36" height="13" rx="2" fill="currentColor" opacity=".35"/>
+    <path d="M250 88v-5h13v5m-7 5h4" stroke="currentColor" stroke-width="2" opacity=".5"/>
+  `,
   living: `
     <rect x="119" y="86" width="145" height="48" rx="12" fill="currentColor" opacity=".29"/>
     <rect x="110" y="105" width="163" height="34" rx="9" fill="currentColor" opacity=".42"/>
@@ -62,5 +101,5 @@ const scenes = {
 
 export function roomScene(value) {
   if (!Object.hasOwn(scenes, value)) return "";
-  return `<svg class="room-art" viewBox="0 0 360 170" fill="none" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round">${background}${scenes[value]}</svg>`;
+  return `<svg class="room-art" viewBox="0 0 360 170" fill="none" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round">${value === "garage" ? "" : background}${scenes[value]}</svg>`;
 }

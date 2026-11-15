@@ -228,7 +228,7 @@ test("backup export preserves shared assets and restore rejects conflicting dupl
   }, triangle);
   expect(result).toMatchObject({
     format: "haven-backup", version: 2, assets: 1, inventoryUnchanged: true,
-    distinctIds: 2, stagedFilesPresent: true, rolledBack: true, original: triangle,
+    distinctIds: 4, stagedFilesPresent: true, rolledBack: true, original: triangle,
   });
   expect(result.duplicateError).toContain("conflicting copies");
 });

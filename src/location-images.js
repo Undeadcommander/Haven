@@ -2,7 +2,8 @@ import { roomScene } from "./room-scenes.js";
 
 export const imageChoices = [
   ["living", "Living room"], ["bedroom", "Bedroom"], ["kitchen", "Kitchen"],
-  ["office", "Office"], ["box", "Box"], ["drawers", "Drawers"],
+  ["office", "Office"], ["garage", "Garage"], ["bathroom", "Bathroom"],
+  ["box", "Box"], ["drawers", "Drawers"],
   ["shelf", "Shelves"], ["wardrobe", "Wardrobe"],
 ];
 
