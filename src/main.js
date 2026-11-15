@@ -13,7 +13,7 @@ import {
   deleteAssets,
   getAssetScope,
 } from "./scan-storage.js";
-import { initialState, validState, createIndex, descendants, searchInventory } from "./store.js";
+import { initialState, validState, createIndex, descendants, searchInventory, inventoryColors } from "./store.js";
 const icons = {
   gear: '<path d="M9.837 5.343L10.437 3.137L13.563 3.137L14.163 5.343L15.178 5.763L17.162 4.628L19.372 6.838L18.237 8.822L18.657 9.837L20.863 10.437L20.863 13.563L18.657 14.163L18.237 15.178L19.372 17.162L17.162 19.372L15.178 18.237L14.163 18.657L13.563 20.863L10.437 20.863L9.837 18.657L8.822 18.237L6.838 19.372L4.628 17.162L5.763 15.178L5.343 14.163L3.137 13.563L3.137 10.437L5.343 9.837L5.763 8.822L4.628 6.838L6.838 4.628L8.822 5.763Z"/><circle cx="12" cy="12" r="3"/>',
   move: '<path d="M3 8h16m-4-4 4 4-4 4M21 16H5m4-4-4 4 4 4"/>',
@@ -325,7 +325,7 @@ function modal(title, description, fields, onSubmit, label = "Save") {
   d.showModal();
 }
 function colorFields(selected = "sage") {
-  return `<fieldset><legend>Color</legend><div class="color-options">${["sage", "sand", "blue", "rose"].map((color) => `<label class="color-option ${color}"><input type="radio" name="color" value="${color}" ${selected === color ? "checked" : ""}><span>${color}</span></label>`).join("")}</div></fieldset>`;
+  return `<fieldset><legend>Color</legend><div class="color-options">${inventoryColors.map((color) => `<label class="color-option ${color}"><input type="radio" name="color" value="${color}" ${selected === color ? "checked" : ""}><span>${color}</span></label>`).join("")}</div></fieldset>`;
 }
 function destinationOptions(selected, excluded = new Set()) {
   return index.sortedLocations().filter((l) => !excluded.has(l.id))

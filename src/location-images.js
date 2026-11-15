@@ -107,6 +107,13 @@ export function bindImagePicker(dialog, initial, fallback, renderImage = locatio
   const preview = picker.querySelector("[data-image-preview]");
   const status = picker.querySelector("[data-image-status]");
   const submit = dialog.querySelector('[type="submit"]');
+  const colors = [...dialog.querySelectorAll('input[name="color"]')];
+  const refreshColor = () => {
+    picker.classList.remove(...colors.map((input) => input.value));
+    picker.classList.add(colors.find((input) => input.checked)?.value || "sage");
+  };
+  colors.forEach((input) => input.addEventListener("change", refreshColor));
+  refreshColor();
   const refresh = () => {
     preview.innerHTML = renderImage(selected) || fallback;
     picker.querySelector("[data-custom-choice]").hidden = !custom;

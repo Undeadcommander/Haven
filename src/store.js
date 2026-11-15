@@ -1,6 +1,8 @@
 import { validLocationImage, validItemImage } from "./location-images.js";
 import { validScanData } from "./scan-data.js";
 import { createLocationTree } from "./location-tree.js";
+export const inventoryColors = ["sage", "sand", "blue", "rose", "mint", "lavender", "terracotta"];
+
 export function initialState() {
   return {
     version: 1,
@@ -57,7 +59,7 @@ export function validState(s) {
       typeof l.name !== "string" ||
       typeof l.description !== "string" ||
       (l.parentId !== null && typeof l.parentId !== "string") ||
-      !["sage", "sand", "blue", "rose"].includes(l.color)
+      !inventoryColors.includes(l.color)
     )
       return false;
   }
@@ -72,7 +74,7 @@ export function validState(s) {
         typeof i.id === "string" &&
         typeof i.name === "string" &&
         typeof i.notes === "string" &&
-        (i.color === undefined || ["sage", "sand", "blue", "rose"].includes(i.color)) &&
+        (i.color === undefined || inventoryColors.includes(i.color)) &&
         ids.has(i.locationId),
     )
   );

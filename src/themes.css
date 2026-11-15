@@ -310,3 +310,15 @@ form input:focus, form textarea:focus, form select:focus {
   --tone: #c39991;
   --wash: #48332f;
 }
+[data-color-scheme="dark"] .mint {
+  --tone: #8dc4aa;
+  --wash: #284437;
+}
+[data-color-scheme="dark"] .lavender {
+  --tone: #b7a0ce;
+  --wash: #3c304a;
+}
+[data-color-scheme="dark"] .terracotta {
+  --tone: #d5a084;
+  --wash: #4d352b;
+}

@@ -9,32 +9,72 @@ const photo = {
   buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=", "base64"),
 };
 
+async function artworkColors(page) {
+  const colors = await page.locator(".location-image-picker").evaluate((picker) => {
+    const palette = (element) => {
+      const style = getComputedStyle(element);
+      return { color: style.color, background: style.backgroundColor };
+    };
+    const swatch = picker.closest("form").querySelector('input[name="color"]:checked').closest("label");
+    return {
+      expected: { color: getComputedStyle(swatch.querySelector("span")).color, background: getComputedStyle(swatch).backgroundColor },
+      preview: palette(picker.querySelector("[data-image-preview]")),
+      choices: [...picker.querySelectorAll(".image-option:has(.room-art)")].map(palette),
+    };
+  });
+  expect(colors.preview).toEqual(colors.expected);
+  for (const choice of colors.choices) expect(choice).toEqual(colors.expected);
+  return colors.preview;
+}
+
+const cardColors = (page, name) => page.getByRole("button", { name: `Open ${name}`, exact: true }).locator(".card-image").evaluate((element) => {
+  const style = getComputedStyle(element);
+  return { color: style.color, background: style.backgroundColor };
+});
+
 test("room and container images can be chosen at creation and changed through gears", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Add room", exact: true }).first().click();
   await page.getByRole("textbox", { name: "Name", exact: true }).fill("Study");
+  for (const color of ["sage", "sand", "blue", "rose", "mint", "lavender", "terracotta"]) {
+    await page.getByRole("radio", { name: color, exact: true }).check();
+    await artworkColors(page);
+  }
+  await page.getByRole("radio", { name: "mint", exact: true }).check();
   await page.getByRole("radio", { name: "Garage", exact: true }).check();
+  const mint = await artworkColors(page);
   await save(page);
-  expect((await saved(page)).locations.find(l => l.name === "Study").image).toBe("garage");
+  expect(await cardColors(page, "Study")).toEqual(mint);
+  expect((await saved(page)).locations.find(l => l.name === "Study")).toMatchObject({ image: "garage", color: "mint" });
+  await page.getByRole("combobox", { name: "Color theme" }).selectOption("plum");
+  const darkMint = await cardColors(page, "Study");
   await settings(page, "Study");
+  expect(await artworkColors(page)).toEqual(darkMint);
+  await page.getByRole("radio", { name: "rose", exact: true }).check();
   await page.getByRole("radio", { name: "Bathroom", exact: true }).check();
+  await artworkColors(page);
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  expect((await saved(page)).locations.find(l => l.name === "Study").image).toBe("garage");
+  expect((await saved(page)).locations.find(l => l.name === "Study")).toMatchObject({ image: "garage", color: "mint" });
+  expect(await cardColors(page, "Study")).toEqual(darkMint);
   await settings(page, "Study");
+  await page.getByRole("radio", { name: "lavender", exact: true }).check();
   await page.getByRole("radio", { name: "Bathroom", exact: true }).check();
+  const lavender = await artworkColors(page);
   await save(page);
   await page.reload();
-  expect((await saved(page)).locations.find(l => l.name === "Study").image).toBe("bathroom");
+  expect((await saved(page)).locations.find(l => l.name === "Study")).toMatchObject({ image: "bathroom", color: "lavender" });
+  expect(await cardColors(page, "Study")).toEqual(lavender);
   await page.getByRole("button", { name: "Open Study", exact: true }).click();
   await page.getByRole("button", { name: "Add a container" }).click();
   await page.getByRole("textbox", { name: "Name", exact: true }).fill("Cabinet");
+  await page.getByRole("radio", { name: "terracotta", exact: true }).check();
   await page.getByRole("radio", { name: "Drawers", exact: true }).check();
   await save(page);
   await settings(page, "Cabinet");
   await page.getByRole("radio", { name: "Shelves", exact: true }).check();
   await save(page);
   await page.reload();
-  expect((await saved(page)).locations.find(l => l.name === "Cabinet").image).toBe("shelf");
+  expect((await saved(page)).locations.find(l => l.name === "Cabinet")).toMatchObject({ image: "shelf", color: "terracotta" });
   await settings(page, "Cabinet");
   await expect(page.getByRole("radio", { name: "Shelves", exact: true })).toBeChecked();
 });

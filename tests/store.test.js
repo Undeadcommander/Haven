@@ -93,15 +93,19 @@ test("backup validation rejects cycles, orphan items, and duplicate IDs", () => 
   s.locations.push({ ...s.locations[0] });
   assert.equal(validState(s), false);
 });
-test("item colors are optional for old inventories and validated in saved backups", () => {
+test("location and item colors survive backups, with optional item colors for old inventories", () => {
   const state = initialState();
   const item = { id: "keys", name: "Keys", notes: "Description", locationId: "living-room" };
   state.items.push(item);
   assert.equal(validState(state), true);
-  for (const color of ["sage", "sand", "blue", "rose"]) {
+  for (const color of ["sage", "sand", "blue", "rose", "mint", "lavender", "terracotta"]) {
+    state.locations[0].color = color;
     item.color = color;
     assert.equal(validState(JSON.parse(JSON.stringify(state))), true);
   }
   item.color = "invalid";
+  assert.equal(validState(state), false);
+  delete item.color;
+  state.locations[0].color = "invalid";
   assert.equal(validState(state), false);
 });

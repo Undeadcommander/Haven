@@ -432,6 +432,18 @@ main {
   --tone: #ad817a;
   --wash: #f4e8e3;
 }
+.mint {
+  --tone: #427b68;
+  --wash: #e4f2ea;
+}
+.lavender {
+  --tone: #78638e;
+  --wash: #eee8f5;
+}
+.terracotta {
+  --tone: #9b634a;
+  --wash: #f7e9de;
+}
 .room-card {
   border: 1px solid #e1e6da;
   border-radius: 10px;
@@ -880,6 +892,7 @@ legend {
 }
 .color-options {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
 }
 .color-option {
