@@ -80,9 +80,21 @@ test("large house collections are searchable, keyboard accessible, and fit narro
   await seed(page, inventory);
   await page.goto("/");
   const original = await page.evaluate(() => localStorage.getItem("haven-inventory"));
-  for (const width of [1440, 1024, 820, 768, 760, 390, 320]) {
+  for (const width of [1920, 1440, 1181, 1180, 1024, 820, 768, 760, 540, 390, 320]) {
     await page.setViewportSize({ width, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+    const header = await page.locator("header").boundingBox();
+    const search = await page.locator(".search-wrap").boundingBox();
+    const switcher = await page.locator("[data-house-switcher]").boundingBox();
+    const account = await page.locator(".header-right").boundingBox();
+    expect(Math.abs(search.x + search.width / 2 - (header.x + header.width / 2))).toBeLessThanOrEqual(1);
+    if (width > 1180) {
+      expect(switcher.x + switcher.width).toBeLessThanOrEqual(search.x);
+      expect(search.x + search.width).toBeLessThanOrEqual(account.x);
+    } else {
+      expect(search.y + search.height).toBeLessThanOrEqual(switcher.y);
+      expect(search.y + search.height).toBeLessThanOrEqual(account.y);
+    }
     await page.locator("[data-house-toggle]").click();
     await page.getByRole("searchbox", { name: "Search houses" }).fill("House 099");
     await expect(page.locator("[data-house-row]:visible")).toHaveCount(1);
