@@ -55,12 +55,12 @@
   font-weight: 600;
 }
 
-.house-switcher__add > span {
-  display: grid;
+.house-switcher__plus,
+.house-switcher__chevron {
+  display: block;
   flex: 0 0 16px;
-  place-items: center;
-  font-size: 18px;
-  line-height: 1;
+  width: 16px;
+  height: 16px;
 }
 
 .house-switcher__name {
@@ -78,14 +78,13 @@
   height: 17px;
 }
 
-.house-switcher__chevron {
-  flex: 0 0 auto;
-  font-size: 18px;
-  line-height: 1;
+.house-switcher__chevron-up,
+.house-switcher__trigger[aria-expanded="true"] .house-switcher__chevron-down {
+  display: none;
 }
 
-.house-switcher__trigger[aria-expanded="true"] .house-switcher__chevron {
-  transform: rotate(180deg);
+.house-switcher__trigger[aria-expanded="true"] .house-switcher__chevron-up {
+  display: block;
 }
 
 .house-switcher__panel {

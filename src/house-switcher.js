@@ -20,9 +20,9 @@ export function houseSwitcherMarkup({ houses, activeHouseId }) {
       <button class="house-switcher__trigger" type="button" data-house-toggle aria-expanded="false" aria-controls="${id}-panel" aria-label="Switch house. ${activeHouse ? "Current house: " : ""}${escapeHtml(name)}" title="${escapeHtml(name)}">
         <svg class="house-switcher__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m3 10 9-7 9 7v10H15v-7H9v7H3z"/></svg>
         <span class="house-switcher__name" data-house-name>${escapeHtml(name)}</span>
-        <span class="house-switcher__chevron" aria-hidden="true">⌄</span>
+        <svg class="house-switcher__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path class="house-switcher__chevron-down" d="m6 9 6 6 6-6"/><path class="house-switcher__chevron-up" d="m6 15 6-6 6 6"/></svg>
       </button>
-      <button class="house-switcher__add" type="button" data-house-add><span aria-hidden="true">+</span> Add house</button>
+      <button class="house-switcher__add" type="button" data-house-add><svg class="house-switcher__plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M12 5v14M5 12h14"/></svg> Add house</button>
     </div>
     <div class="house-switcher__panel" id="${id}-panel" data-house-panel role="region" aria-label="Switch house" hidden>
       <label class="house-switcher__search-label" for="${id}-search">Search houses</label>
