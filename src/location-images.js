@@ -1,4 +1,5 @@
 import { roomScene } from "./room-scenes.js";
+import { MAX_PHOTO_LENGTH, readPhoto, encodePhoto, photoEditorFields, bindPhotoEditor } from "./photo-editor.js";
 
 export const imageChoices = [
   ["living", "Living room"], ["bedroom", "Bedroom"], ["kitchen", "Kitchen"],
@@ -45,7 +46,7 @@ export function validItemImage(value) {
 
 function validImage(value, choices) {
   return value === undefined || value === null || choices.some(([id]) => id === value)
-    || (typeof value === "string" && value.length <= 180_000
+    || (typeof value === "string" && value.length <= MAX_PHOTO_LENGTH
       && /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(value));
 }
 
@@ -64,32 +65,7 @@ export function locationImage(value) {
 }
 
 export async function prepareLocationPhoto(file) {
-  if (!["image/jpeg", "image/png", "image/webp"].includes(file.type))
-    throw Error("Choose a JPG, PNG, or WebP image.");
-  if (file.size > 10_000_000) throw Error("Choose an image smaller than 10 MB.");
-  const url = URL.createObjectURL(file);
-  try {
-    const image = new Image();
-    image.src = url;
-    await image.decode();
-    const scale = Math.min(1, 800 / Math.max(image.naturalWidth, image.naturalHeight));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
-    const ctx = canvas.getContext("2d");
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-    for (const quality of [.8, .65, .45, .25]) {
-      const result = canvas.toDataURL("image/jpeg", quality);
-      if (validLocationImage(result)) return result;
-    }
-    throw Error("This image is too detailed. Try a smaller image.");
-  } catch (error) {
-    throw Error(error.message?.startsWith("This image") ? error.message : "This image could not be read. Try another JPG, PNG, or WebP.");
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  return encodePhoto(await readPhoto(file));
 }
 
 export function imageFields(kind) {
@@ -97,16 +73,26 @@ export function imageFields(kind) {
   const choices = kind === "item" ? itemImageChoices : imageChoices.filter(([id]) => kind ? !containerPresets.has(id) : containerPresets.has(id));
   const renderImage = kind === "item" ? itemImage : locationImage;
   const defaultChoice = kind === true ? "" : `<label class="image-option"><input type="radio" name="image-choice" value="default"><span>Default</span></label>`;
-  return `<fieldset class="location-image-picker"><legend>Image</legend><div class="location-image-preview" data-image-preview></div><div class="image-options">${defaultChoice}${choices.map(([id, name]) => `<label class="image-option"><input type="radio" name="image-choice" value="${id}">${renderImage(id)}<span>${name}</span></label>`).join("")}<label class="image-option" data-custom-choice hidden><input type="radio" name="image-choice" value="custom"><span>Your photo</span></label></div><label>Upload your own image<input type="file" data-image-upload accept="image/jpeg,image/png,image/webp" aria-describedby="image-help"></label><p id="image-help" class="modal-description">JPG, PNG, or WebP, up to 10 MB. Photos are resized to save space.</p><p data-image-status role="status"></p></fieldset>`;
+  return `<fieldset class="location-image-picker" ${kind === "item" ? "" : "data-crop-enabled"}><legend>Image</legend>
+    <div data-image-choices><div class="location-image-preview" data-image-preview></div>
+    <button type="button" class="text-button photo-adjust" data-photo-adjust hidden>Adjust photo</button>
+    <div class="image-options">${defaultChoice}${choices.map(([id, name]) => `<label class="image-option"><input type="radio" name="image-choice" value="${id}">${renderImage(id)}<span>${name}</span></label>`).join("")}<label class="image-option" data-custom-choice hidden><input type="radio" name="image-choice" value="custom"><span>Your photo</span></label></div>
+    <label>Upload your own image<input type="file" data-image-upload accept="image/jpeg,image/png,image/webp" aria-describedby="image-help"></label>
+    <p id="image-help" class="modal-description">JPG, PNG, or WebP, up to 10 MB. ${kind === "item" ? "Photos are resized to save space." : "Crop and zoom after choosing your photo."}</p></div>
+    ${kind === "item" ? "" : photoEditorFields()}<p data-image-status role="status"></p></fieldset>`;
 }
 
 export function bindImagePicker(dialog, initial, fallback, renderImage = locationImage, defaultSelection = null) {
   let selected = initial ?? defaultSelection, custom = initial?.startsWith("data:") ? initial : null;
-  let pending = false;
+  let pending = false, disposed = false, cropSession = null, customSource = null;
   const picker = dialog.querySelector(".location-image-picker");
   const preview = picker.querySelector("[data-image-preview]");
   const status = picker.querySelector("[data-image-status]");
   const submit = dialog.querySelector('[type="submit"]');
+  const editor = picker.querySelector("[data-photo-editor]");
+  const adjust = picker.querySelector("[data-photo-adjust]");
+  const choices = picker.querySelector("[data-image-choices]");
+  const colorPicker = dialog.querySelector(".color-picker");
   const colors = [...dialog.querySelectorAll('input[name="color"]')];
   const refreshColor = () => {
     picker.classList.remove(...colors.map((input) => input.value));
@@ -117,12 +103,74 @@ export function bindImagePicker(dialog, initial, fallback, renderImage = locatio
   const refresh = () => {
     preview.innerHTML = renderImage(selected) || fallback;
     picker.querySelector("[data-custom-choice]").hidden = !custom;
+    const isPhoto = !!selected?.startsWith("data:");
+    adjust.hidden = !editor || !isPhoto;
+    if (colorPicker) {
+      colorPicker.disabled = isPhoto || pending;
+      colorPicker.querySelector("[data-photo-color-note]").hidden = !colorPicker.disabled;
+    }
     const choice = selected === custom && custom ? "custom" : selected || "default";
     picker.querySelectorAll('[name="image-choice"]').forEach((input) => { input.checked = input.value === choice; });
+    submit.disabled = pending;
   };
+  const active = () => !disposed && picker.isConnected && dialog.open;
+  const finishCrop = () => {
+    cropSession = null;
+    pending = false;
+    editor.hidden = true;
+    choices.hidden = false;
+    refresh();
+  };
+  const startCrop = (image, framing) => {
+    cropSession = bindPhotoEditor(editor, image, framing);
+    choices.hidden = true;
+    editor.hidden = false;
+    picker.disabled = false;
+    status.textContent = "Adjust your photo, then choose Use photo.";
+    refresh();
+    editor.querySelector("[data-photo-canvas]").focus();
+  };
+  if (editor) {
+    editor.querySelector("[data-photo-apply]").onclick = () => {
+      try {
+        const image = encodePhoto(cropSession.image, cropSession.crop());
+        customSource = { image: cropSession.image, framing: cropSession.framing() };
+        selected = custom = image;
+        finishCrop();
+        status.textContent = "Photo ready. Save to apply your changes.";
+        adjust.focus({ preventScroll: true });
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    };
+    editor.querySelector("[data-photo-cancel]").onclick = () => {
+      finishCrop();
+      status.textContent = "Crop canceled. Your image is unchanged.";
+      (adjust.hidden ? picker.querySelector("[data-image-upload]") : adjust).focus({ preventScroll: true });
+    };
+    adjust.onclick = async () => {
+      pending = true;
+      picker.disabled = true;
+      status.textContent = "Preparing your photo...";
+      refresh();
+      try {
+        const image = customSource?.image || await readPhoto(custom);
+        if (active()) startCrop(image, customSource?.framing);
+      } catch (error) {
+        if (active()) {
+          pending = false;
+          status.textContent = error.message;
+        }
+      } finally {
+        picker.disabled = false;
+        if (active()) refresh();
+      }
+    };
+  }
   picker.querySelectorAll('[name="image-choice"]').forEach((input) => {
     input.onchange = () => {
       selected = input.value === "default" ? null : input.value === "custom" ? custom : input.value;
+      status.textContent = "";
       refresh();
     };
   });
@@ -131,25 +179,35 @@ export function bindImagePicker(dialog, initial, fallback, renderImage = locatio
     if (!file) return;
     pending = true;
     picker.disabled = true;
-    submit.disabled = true;
-    status.textContent = "Preparing your image…";
+    status.textContent = "Preparing your photo...";
+    refresh();
     try {
-      custom = await prepareLocationPhoto(file);
-      selected = custom;
-      refresh();
-      status.textContent = "Photo ready. Save to apply your changes.";
+      const image = await readPhoto(file);
+      if (!active()) return;
+      if (editor) startCrop(image);
+      else {
+        selected = custom = encodePhoto(image);
+        pending = false;
+        status.textContent = "Photo ready. Save to apply your changes.";
+      }
     } catch (error) {
-      status.textContent = error.message;
+      if (active()) {
+        pending = false;
+        status.textContent = error.message;
+      }
     } finally {
-      pending = false;
       picker.disabled = false;
-      submit.disabled = false;
       event.target.value = "";
+      if (active()) refresh();
     }
   };
+  dialog.addEventListener("close", () => {
+    disposed = true;
+    cropSession = customSource = null;
+  }, { once: true });
   refresh();
   return () => {
-    if (pending) throw Error("Please wait for your image to finish preparing.");
+    if (pending) throw Error("Finish or cancel your photo crop before saving.");
     return selected;
   };
 }

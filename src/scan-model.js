@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
+import { MAX_SCAN_VERTICES, detailError, preflightGLB, preflightOBJ } from "./scan-limits.js";
 
 export function disposeObject(object) {
   const textures = new Set(),
@@ -31,11 +32,12 @@ export async function readObject(blob, format) {
     if (blob.size > 30_000_000) throw Error("Choose a scan smaller than 30 MB.");
     if (!["obj", "glb", "points"].includes(format))
       throw Error("Unknown scan format.");
-    if (format === "obj") object = new OBJLoader().parse(await blob.text());
+    if (format === "obj") object = new OBJLoader().parse(preflightOBJ(await blob.text()));
     else if (format === "points") {
       const buffer = await blob.arrayBuffer();
       if (buffer.byteLength % 12 !== 0 || buffer.byteLength < 12)
         throw Error("Invalid depth scan.");
+      if (buffer.byteLength / 12 > MAX_SCAN_VERTICES) throw detailError();
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute(
         "position",
@@ -50,6 +52,8 @@ export async function readObject(blob, format) {
         }),
       );
     } else {
+      const buffer = await blob.arrayBuffer();
+      preflightGLB(buffer);
       const manager = new THREE.LoadingManager();
       manager.setURLModifier((url) => {
         if (!url.startsWith("blob:") && !url.startsWith("data:"))
@@ -59,17 +63,28 @@ export async function readObject(blob, format) {
         return url;
       });
       object = (
-        await new GLTFLoader(manager).parseAsync(await blob.arrayBuffer(), "")
+        await new GLTFLoader(manager).parseAsync(buffer, "")
       ).scene;
     }
     let vertices = 0;
     object.traverse((child) => {
       const positions = child.geometry?.getAttribute("position");
       if (positions) {
-        vertices += positions.count;
-        for (let n = 0; n < positions.array.length; n++)
-          if (!Number.isFinite(positions.array[n]))
+        const indices = child.geometry.index;
+        vertices += Math.max(positions.count, indices?.count || 0) *
+          (child.isInstancedMesh ? child.count : 1);
+        if (vertices > MAX_SCAN_VERTICES) throw detailError();
+        if (positions.itemSize !== 3) throw Error("Invalid scan coordinates.");
+        for (let index = 0; index < positions.count; index++)
+          if (!Number.isFinite(positions.getX(index)) ||
+              !Number.isFinite(positions.getY(index)) ||
+              !Number.isFinite(positions.getZ(index)))
             throw Error("This scan contains invalid coordinates.");
+        for (let index = 0; index < (indices?.count || 0); index++) {
+          const vertex = indices.getX(index);
+          if (!Number.isInteger(vertex) || vertex < 0 || vertex >= positions.count)
+            throw Error("This scan contains invalid geometry indices.");
+        }
       }
       if (child.isMesh) {
         for (const m of Array.isArray(child.material)
@@ -80,10 +95,6 @@ export async function readObject(blob, format) {
     });
     if (!vertices)
       throw Error("This file does not contain a 3D surface or depth points.");
-    if (vertices > 2_000_000)
-      throw Error(
-        "This scan is too detailed. Export a simplified model with fewer than two million vertices.",
-      );
     object.updateMatrixWorld(true);
     const bounds = new THREE.Box3().setFromObject(object),
       size = bounds.getSize(new THREE.Vector3());

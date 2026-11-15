@@ -23,6 +23,7 @@ test("item presets persist through editing and moving, with uploads and backups"
   await settings(page);
   await page.getByLabel("Upload your own image").setInputFiles(photo);
   await expect(page.locator("[data-image-status]")).toContainText("Photo ready");
+  await expect(page.locator('input[name="color"]:enabled')).toHaveCount(0);
   await save(page);
   const image = (await saved(page)).items[0].image;
   expect(image).toMatch(/^data:image\/jpeg;base64,/);
@@ -52,6 +53,7 @@ test("item presets persist through editing and moving, with uploads and backups"
   expect((await saved(page)).items[0].image).toBe(image);
   await settings(page);
   await page.getByRole("radio", { name: "Default", exact: true }).check();
+  await expect(page.locator('input[name="color"]:enabled')).toHaveCount(7);
   await save(page);
   await expect(page.locator(".item-symbol img, .item-symbol .item-art")).toHaveCount(0);
   expect((await saved(page)).items[0].image).toBeNull();
@@ -63,6 +65,7 @@ test("a photo can be uploaded while creating an item", async ({ page }) => {
   await page.getByRole("textbox", { name: "Item name" }).fill("Spare keys");
   await page.getByLabel("Upload your own image").setInputFiles(photo);
   await expect(page.locator("[data-image-status]")).toContainText("Photo ready");
+  await expect(page.locator('input[name="color"]:enabled')).toHaveCount(0);
   await save(page);
   await page.reload();
   await expect(page.locator(".item-symbol img")).toBeVisible();

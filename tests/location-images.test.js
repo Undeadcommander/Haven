@@ -36,3 +36,23 @@ test("location images validate and survive account snapshot encoding", () => {
     assert.equal(validState(state), false);
   }
 });
+
+
+test("photo crops keep a landscape frame inside the source at every zoom and position", async () => {
+  const { photoCrop } = await import("../src/photo-editor.js");
+  assert.deepEqual(photoCrop(1600, 800), { x: 0, y: 0, width: 1600, height: 800 });
+  assert.deepEqual(photoCrop(800, 1600), { x: 0, y: 600, width: 800, height: 400 });
+  assert.deepEqual(photoCrop(1600, 800, { zoom: 2, x: 1, y: 0 }), { x: 800, y: 0, width: 800, height: 400 });
+  assert.deepEqual(photoCrop(1600, 800, { zoom: 2, x: -1, y: 2 }), { x: 0, y: 400, width: 800, height: 400 });
+  for (const [width, height] of [[1600, 800], [800, 1600], [1, 1], [5000, 30]]) {
+    for (const zoom of [0, 1, 1.5, 3, 4]) {
+      for (const x of [0, .5, 1]) for (const y of [0, .5, 1]) {
+        const crop = photoCrop(width, height, { zoom, x, y });
+        assert.ok(crop.x >= 0 && crop.y >= 0);
+        assert.ok(crop.x + crop.width <= width + .00001);
+        assert.ok(crop.y + crop.height <= height + .00001);
+        assert.equal(crop.width / crop.height, 2);
+      }
+    }
+  }
+});

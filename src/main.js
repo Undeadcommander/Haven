@@ -63,6 +63,7 @@ let index = createIndex(state),
   itemPage = 0;
 const ITEMS_PER_PAGE = 100;
 const root = document.querySelector("#app");
+const inventoryChanges = new EventTarget();
 let cancelDrag = () => {};
 const account = setupAccount({
   replace(inventory) {
@@ -74,6 +75,7 @@ const account = setupAccount({
     highlight = null;
     itemPage = 0;
     render();
+    inventoryChanges.dispatchEvent(new Event("replace"));
   },
 });
 function save(next) {
@@ -325,7 +327,7 @@ function modal(title, description, fields, onSubmit, label = "Save") {
   d.showModal();
 }
 function colorFields(selected = "sage") {
-  return `<fieldset><legend>Color</legend><div class="color-options">${inventoryColors.map((color) => `<label class="color-option ${color}"><input type="radio" name="color" value="${color}" ${selected === color ? "checked" : ""}><span>${color}</span></label>`).join("")}</div></fieldset>`;
+  return `<fieldset class="color-picker" aria-describedby="photo-color-help"><legend>Color</legend><div class="color-options">${inventoryColors.map((color) => `<label class="color-option ${color}"><input type="radio" name="color" value="${color}" ${selected === color ? "checked" : ""}><span>${color}</span></label>`).join("")}</div><p id="photo-color-help" class="modal-description" data-photo-color-note hidden>Your photo keeps its own colors. Choose artwork to use these colors.</p></fieldset>`;
 }
 function destinationOptions(selected, excluded = new Set()) {
   return index.sortedLocations().filter((l) => !excluded.has(l.id))
@@ -428,7 +430,7 @@ function editLocation(l, parent) {
         image,
         name,
         description: data.get("description").trim(),
-        color: data.get("color"),
+        color: d.querySelector('input[name="color"]:checked')?.value || "sage",
       };
       if (
         save({
@@ -464,7 +466,7 @@ function editItem(item) {
         name,
         notes: data.get("notes").trim(),
         locationId: data.get("location"),
-        color: data.get("color"),
+        color: d.querySelector('input[name="color"]:checked')?.value || "sage",
       };
       let next;
       try {
@@ -633,6 +635,10 @@ async function showRoomScan() {
       getState: () => state,
       getIndex: () => index,
       getScope: () => account.uid,
+      subscribe(listener) {
+        inventoryChanges.addEventListener("replace", listener);
+        return () => inventoryChanges.removeEventListener("replace", listener);
+      },
       save,
       navigate,
       toast,

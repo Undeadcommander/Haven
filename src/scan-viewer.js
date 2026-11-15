@@ -6,6 +6,11 @@ import { captureDepth } from "./capture-depth.js";
 import "./scan.css";
 import { readObject, disposeObject } from "./scan-model.js";
 
+const validPosition = (position) => Array.isArray(position) &&
+  position.length === 3 && position.every(Number.isFinite);
+const sameScan = (left, right) => left?.id === right?.id &&
+  left?.assetId === right?.assetId && left?.format === right?.format;
+
 export async function openScanViewer(locationId, api) {
   const openScope = api.getScope?.() || null;
   const { esc } = api,
@@ -28,7 +33,10 @@ export async function openScanViewer(locationId, api) {
     controls,
     model,
     observer,
+    captureController,
+    unsubscribe,
     closed = false,
+    stale = false,
     busy = false,
     placement = false,
     epoch = 0;
@@ -43,17 +51,23 @@ export async function openScanViewer(locationId, api) {
     return cachedIndex;
   };
   const scan = () => inventoryIndex().scanByLocation.get(locationId);
+  let displayedScan = scan();
   const markers = () => inventoryIndex().markersByScan.get(scan()?.id) || [];
   const tell = (message, error = false) => {
     status.textContent = message;
     status.classList.toggle("scan-error", error);
   };
   const persist = (next) => {
+    if (closed || stale) return false;
     if ((api.getScope?.() || null) !== openScope) {
       tell(
         "The account changed. Reopen this scan in the current account.",
         true,
       );
+      return false;
+    }
+    if ((next.markers || []).some((marker) => !validPosition(marker.position))) {
+      tell("The marker has invalid coordinates. Choose another point.", true);
       return false;
     }
     const saved = api.save(next);
@@ -64,6 +78,33 @@ export async function openScanViewer(locationId, api) {
       );
     return saved;
   };
+  const deleteUnusedAsset = (id) => {
+    if ((api.getScope?.() || null) !== openScope ||
+        api.getState().scans?.some((entry) => entry.assetId === id)) return;
+    deleteAsset(id, openScope).catch(() => {});
+  };
+  function ensureCurrentScan(expected = displayedScan) {
+    if (closed) return false;
+    if (!stale && (api.getScope?.() || null) === openScope &&
+        inventoryIndex().byId.has(locationId) && sameScan(expected, scan())) return true;
+    stale = true;
+    captureController?.abort();
+    placement = false;
+    menu.hidden = true;
+    dots.replaceChildren();
+    markerButtons.clear();
+    panel.replaceChildren();
+    if (model) {
+      scene.remove(model);
+      disposeObject(model);
+      model = null;
+      renderer.render(scene, camera);
+    }
+    for (const key of ["import-scan", "capture-scan", "remove-scan", "place-marker", "reset-camera"])
+      dialog.querySelector("[data-" + key + "]").disabled = true;
+    tell("This scan or account changed. Close and reopen the scan before making changes.", true);
+    return false;
+  }
   const snapshot = () => {
     const s = api.getState();
     return { state: s, index: inventoryIndex() };
@@ -85,6 +126,8 @@ export async function openScanViewer(locationId, api) {
   function cleanup() {
     closed = true;
     epoch++;
+    captureController?.abort();
+    unsubscribe?.();
     observer?.disconnect();
     controls?.dispose();
     disposeObject(model);
@@ -107,11 +150,13 @@ export async function openScanViewer(locationId, api) {
   window.addEventListener("popstate", close);
   function setBusy(value) {
     busy = value;
+    if (stale) return;
     for (const key of ["import-scan", "capture-scan", "remove-scan"])
       dialog.querySelector(`[data-${key}]`).disabled = value;
   }
   function paint() {
     if (!renderer || closed) return;
+    if (!stale && !ensureCurrentScan()) return;
     renderer.render(scene, camera);
     for (const m of markers()) {
       const b = markerButtons.get(m.id);
@@ -184,13 +229,14 @@ export async function openScanViewer(locationId, api) {
     controls.update();
     paint();
   }
-  function showObject(object) {
+  function showObject(object, entry) {
     init();
     if (model) {
       scene.remove(model);
       disposeObject(model);
     }
     model = object;
+    displayedScan = entry;
     scene.add(model);
     stage.querySelector(".scan-empty").hidden = true;
     dialog.querySelector("[data-place-marker]").disabled = false;
@@ -235,6 +281,7 @@ export async function openScanViewer(locationId, api) {
       .forEach((b) => (b.onclick = () => showDetails(b.dataset.markerId)));
   }
   function showDetails(id) {
+    if (!ensureCurrentScan()) return;
     const m = markers().find((m) => m.id === id),
       target = m && targetOf(m);
     if (!target) {
@@ -253,13 +300,14 @@ export async function openScanViewer(locationId, api) {
       );
     };
     panel.querySelector("[data-unpin]").onclick = () => {
+      if (!ensureCurrentScan()) return;
       const s = api.getState();
       if (persist({ ...s, markers: s.markers.filter((x) => x.id !== id) }))
         refreshMarkers();
     };
   }
   function pick(e) {
-    if (!model || busy) return;
+    if (!model || busy || !ensureCurrentScan()) return;
     const rect = stage.getBoundingClientRect(),
       ray = new THREE.Raycaster();
     ray.params.Points.threshold =
@@ -293,21 +341,27 @@ export async function openScanViewer(locationId, api) {
           )
         : hit.point
     ).toArray();
+    if (!validPosition(point)) {
+      tell("That surface has invalid coordinates. Choose another point.", true);
+      return;
+    }
+    const placementScan = displayedScan;
     menu.innerHTML =
       "<button data-add-scan-item>Add item</button><button data-add-scan-container>Mark container</button><button data-dismiss-menu>Cancel</button>";
     menu.hidden = false;
     menu.style.left = `${Math.max(0, Math.min(e.clientX - rect.left, rect.width - 190))}px`;
     menu.style.top = `${Math.max(0, Math.min(e.clientY - rect.top, rect.height - 135))}px`;
     menu.querySelector("[data-add-scan-item]").onclick = () =>
-      markerForm("item", point);
+      markerForm("item", point, placementScan);
     menu.querySelector("[data-add-scan-container]").onclick = () =>
-      markerForm("container", point);
+      markerForm("container", point, placementScan);
     menu.querySelector("[data-dismiss-menu]").onclick = () =>
       (menu.hidden = true);
     menu.querySelector("button").focus();
     tell("Choose what belongs at this point.");
   }
-  function markerForm(kind, position) {
+  function markerForm(kind, position, placementScan) {
+    if (!ensureCurrentScan(placementScan)) return;
     menu.hidden = true;
     const { state, index } = snapshot(),
       ids = descendants(index, locationId);
@@ -329,6 +383,11 @@ export async function openScanViewer(locationId, api) {
     panel.querySelector("[data-back-markers]").onclick = listMarkers;
     form.onsubmit = (e) => {
       e.preventDefault();
+      if (!ensureCurrentScan(placementScan)) return;
+      if (!validPosition(position)) {
+        tell("The marker has invalid coordinates. Choose another point.", true);
+        return;
+      }
       const s = api.getState(),
         active = scan();
       if (!active) {
@@ -407,9 +466,10 @@ export async function openScanViewer(locationId, api) {
       }
     };
   }
-  async function importBlob(blob, name, format) {
+  async function importBlob(blob, name, format, expected = displayedScan) {
     let object, assetId;
     try {
+      if (!ensureCurrentScan(expected)) return;
       if (blob.size > 30_000_000)
         throw Error("Choose a scan smaller than 30 MB.");
       tell("Reading your scan…");
@@ -418,9 +478,13 @@ export async function openScanViewer(locationId, api) {
         disposeObject(object);
         return;
       }
+      if (!ensureCurrentScan(expected))
+        throw Error("This scan changed. Reopen it before importing a replacement.");
       init(); // Confirm graphics support before replacing a previous scan.
       assetId = crypto.randomUUID();
       await putAsset(assetId, blob, openScope);
+      if (!ensureCurrentScan(expected))
+        throw Error("This scan changed. The replacement was not saved.");
       const s = api.getState(),
         previous = scan(),
         entry = { id: crypto.randomUUID(), assetId, locationId, name, format };
@@ -436,9 +500,9 @@ export async function openScanViewer(locationId, api) {
         throw Error(
           "Scan metadata could not be saved. The previous scan is unchanged.",
         );
-      showObject(object);
+      showObject(object, entry);
       object = null;
-      if (previous) deleteAsset(previous.assetId, openScope).catch(() => {});
+      if (previous) deleteUnusedAsset(previous.assetId);
       tell(`Loaded ${name}. Right-click a surface to place a marker.`);
     } catch (error) {
       disposeObject(object);
@@ -448,6 +512,7 @@ export async function openScanViewer(locationId, api) {
     }
   }
   dialog.querySelector("[data-import-scan]").onclick = () => {
+    if (!ensureCurrentScan()) return;
     if (
       scan() &&
       !confirm(
@@ -471,6 +536,7 @@ export async function openScanViewer(locationId, api) {
     setBusy(false);
   };
   dialog.querySelector("[data-place-marker]").onclick = () => {
+    if (!ensureCurrentScan()) return;
     placement = !placement;
     dialog
       .querySelector("[data-place-marker]")
@@ -483,6 +549,7 @@ export async function openScanViewer(locationId, api) {
   };
   dialog.querySelector("[data-reset-camera]").onclick = fit;
   dialog.querySelector("[data-remove-scan]").onclick = () => {
+    if (!ensureCurrentScan()) return;
     const previous = scan();
     if (
       !previous ||
@@ -499,11 +566,13 @@ export async function openScanViewer(locationId, api) {
         markers: (s.markers || []).filter((m) => m.scanId !== previous.id),
       })
     ) {
-      deleteAsset(previous.assetId, openScope).catch(() => {});
+      deleteUnusedAsset(previous.assetId);
       close();
     }
   };
   dialog.querySelector("[data-capture-scan]").onclick = async () => {
+    if (!ensureCurrentScan()) return;
+    const expected = displayedScan;
     if (
       scan() &&
       !confirm(
@@ -516,6 +585,8 @@ export async function openScanViewer(locationId, api) {
     overlay.innerHTML =
       '<h2>Scan your room</h2><p>Move slowly around the room. Point the camera at walls, furniture, and storage areas. Stay aware of your surroundings.</p><p data-progress>Starting camera depth capture…</p><button class="primary" data-finish-capture>Finish scan</button><button class="secondary" data-cancel-capture>Cancel</button>';
     dialog.append(overlay);
+    const controller = new AbortController();
+    captureController = controller;
     setBusy(true);
     try {
       const blob = await captureDepth(
@@ -523,36 +594,43 @@ export async function openScanViewer(locationId, api) {
         (count) =>
           (overlay.querySelector("[data-progress]").textContent =
             `${count.toLocaleString()} depth points captured`),
+        { signal: controller.signal },
       );
-      if (blob) await importBlob(blob, "Camera depth scan", "points");
-      else tell("Capture cancelled.");
+      if (blob && !closed) await importBlob(blob, "Camera depth scan", "points", expected);
+      else if (!closed && !stale) tell("Capture cancelled.");
     } catch (error) {
       tell(error.message, true);
     } finally {
+      if (captureController === controller) captureController = null;
       overlay.remove();
       setBusy(false);
     }
   };
+  unsubscribe = api.subscribe?.(() => ensureCurrentScan());
   listMarkers();
   const active = scan();
   if (active) {
     setBusy(true);
     const load = ++epoch;
+    let object;
     try {
       tell("Loading saved scan…");
       const blob = await getAsset(active.assetId, openScope);
+      if (!ensureCurrentScan(active)) return;
       if (!blob)
         throw Error(
           "This scan file is stored on the device that created it. Room and marker data can sync, but scan files stay local. Restore a full backup from that device to bring the scan here.",
         );
-      const object = await readObject(blob, active.format);
-      if (closed || load !== epoch) {
+      object = await readObject(blob, active.format);
+      if (closed || load !== epoch || !ensureCurrentScan(active)) {
         disposeObject(object);
         return;
       }
-      showObject(object);
+      showObject(object, active);
+      object = null;
       tell(`Loaded ${active.name}.`);
     } catch (error) {
+      disposeObject(object);
       tell(error.message, true);
       dialog.querySelector("[data-remove-scan]").hidden = false;
     } finally {

@@ -39,121 +39,91 @@ function captureFailure(error) {
   };
   return Error(`${explanations[error.name] || `Camera depth capture failed (${error.name || "unknown error"}). Close and reopen the scan, then try again or import a scan.`} The existing scan has not changed.`, { cause: error });
 }
-export async function captureDepth(overlay, onProgress) {
+export async function captureDepth(overlay, onProgress, { signal } = {}) {
+  if (signal?.aborted) return null;
   if (!navigator.xr)
     throw Error(
       "Camera depth scanning needs a WebXR depth-enabled phone and browser. Import a GLB or OBJ scan on this device.",
     );
-  let session;
-  try {
-    session = await navigator.xr.requestSession("immersive-ar", {
-      requiredFeatures: ["depth-sensing", "dom-overlay"],
-      depthSensing: {
-        usagePreference: ["cpu-optimized"],
-        dataFormatPreference: ["float32", "luminance-alpha"],
-      },
-      domOverlay: { root: overlay },
-    });
-  } catch (error) {
-    if (error.name === "NotAllowedError")
-      throw Error(
-        "Camera access was not granted. You can try again or import a scan.",
-      );
-    throw Error(
-      "This device or browser does not support WebXR camera depth scanning. Import a GLB or OBJ scan instead.",
-    );
-  }
-  const canvas = document.createElement("canvas");
-  let gl, space;
-  try {
-    gl = canvas.getContext("webgl2", { xrCompatible: true, alpha: true });
-    if (!gl) throw Error("WebGL is unavailable.");
-    await gl.makeXRCompatible();
-    session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
-    space = await session.requestReferenceSpace("local");
-  } catch (error) {
-    await session.end();
-    throw error;
-  }
   return new Promise((resolve, reject) => {
-    const points = [],
-      voxels = new Set();
-    let frames = 0,
-      failed = null,
-      cancelled = false,
-      ended = false;
-    const stop = () => session.end().catch(() => {});
-    const cancel = () => {
-      cancelled = true;
-      stop();
+    const finishButton = overlay.querySelector("[data-finish-capture]"),
+      cancelButton = overlay.querySelector("[data-cancel-capture]"),
+      points = [], voxels = new Set();
+    let session, gl, space, failed,
+      frames = 0, settled = false, stopping = false, ended = false;
+    const releaseGraphics = () => {
+      const context = gl;
+      gl = null;
+      context?.getExtension("WEBGL_lose_context")?.loseContext();
     };
-    overlay.querySelector("[data-finish-capture]").onclick = stop;
-    overlay.querySelector("[data-cancel-capture]").onclick = cancel;
-    session.addEventListener(
-      "end",
-      () => {
-        ended = true;
-        gl.getExtension("WEBGL_lose_context")?.loseContext();
-        if (cancelled) return resolve(null);
-        if (failed) return reject(failed);
-        if (points.length < 300)
-          return reject(
-            Error(
-              "Not enough depth data was captured. Scan textured surfaces in good light, or import a scan.",
-            ),
-          );
-        resolve(
-          new Blob([new Float32Array(points)], {
-            type: "application/octet-stream",
-          }),
-        );
-      },
-      { once: true },
-    );
+    const complete = (error, blob = null) => {
+      if (settled) return;
+      settled = true;
+      finishButton.onclick = cancelButton.onclick = null;
+      finishButton.disabled = true;
+      signal?.removeEventListener("abort", cancel);
+      session?.removeEventListener("end", onEnd);
+      if (error) reject(error);
+      else resolve(blob);
+    };
+    const shutdown = () => {
+      if (!session || ended) {
+        releaseGraphics();
+        return Promise.resolve();
+      }
+      return Promise.resolve().then(() => session.end()).finally(releaseGraphics);
+    };
+    function cancel() {
+      if (settled) return;
+      complete(null);
+      shutdown().catch(() => {});
+    }
+    function onEnd() {
+      ended = true;
+      releaseGraphics();
+      if (settled) return;
+      if (failed) return complete(failed);
+      if (points.length < 300)
+        return complete(Error(
+          "Not enough depth data was captured. Scan textured surfaces in good light, or import a scan.",
+        ));
+      complete(null, new Blob([new Float32Array(points)], {
+        type: "application/octet-stream",
+      }));
+    }
+    function stop() {
+      if (settled || stopping) return;
+      stopping = true;
+      shutdown().then(onEnd, (error) => complete(failed || captureFailure(error)));
+    }
+    finishButton.disabled = true;
+    finishButton.onclick = stop;
+    cancelButton.onclick = cancel;
+    signal?.addEventListener("abort", cancel, { once: true });
     const frame = (_time, xrFrame) => {
-      if (ended) return;
+      if (settled || stopping) return;
       try {
-        gl.bindFramebuffer(
-          gl.FRAMEBUFFER,
-          session.renderState.baseLayer.framebuffer,
-        );
+        gl.bindFramebuffer(gl.FRAMEBUFFER, session.renderState.baseLayer.framebuffer);
         gl.clearColor(0, 0, 0, 0);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         const pose = xrFrame.getViewerPose(space);
         if (pose && frames++ % 8 === 0) {
           if (typeof xrFrame.getDepthInformation !== "function")
             throw new DOMException("CPU depth is unavailable", "NotSupportedError");
-          const view = pose.views[0],
-            depth = xrFrame.getDepthInformation(view);
+          const view = pose.views[0], depth = xrFrame.getDepthInformation(view);
           if (depth) {
-            const inverseUV = new Matrix4()
-              .fromArray(depth.normDepthBufferFromNormView.matrix)
-              .invert();
-            const projection = new Matrix4()
-              .fromArray(view.projectionMatrix)
-              .invert();
-            const transform = new Matrix4().fromArray(view.transform.matrix);
-            const step = Math.max(
-              4,
-              Math.ceil(Math.max(depth.width, depth.height) / 64),
-            );
+            const inverseUV = new Matrix4().fromArray(depth.normDepthBufferFromNormView.matrix).invert(),
+              projection = new Matrix4().fromArray(view.projectionMatrix).invert(),
+              transform = new Matrix4().fromArray(view.transform.matrix);
+            const step = Math.max(4, Math.ceil(Math.max(depth.width, depth.height) / 64));
             for (let y = 0; y < depth.height; y += step)
               for (let x = 0; x < depth.width; x += step) {
-                const p = sampleDepthPoint(
-                  depth,
-                  x,
-                  y,
-                  inverseUV,
-                  projection,
-                  transform,
-                );
-                if (!p) continue;
-                const key = [p.x, p.y, p.z]
-                  .map((n) => Math.round(n / 0.03))
-                  .join(",");
+                const point = sampleDepthPoint(depth, x, y, inverseUV, projection, transform);
+                if (!point) continue;
+                const key = [point.x, point.y, point.z].map((value) => Math.round(value / 0.03)).join(",");
                 if (!voxels.has(key) && points.length < 600_000) {
                   voxels.add(key);
-                  points.push(p.x, p.y, p.z);
+                  points.push(point.x, point.y, point.z);
                 }
               }
             onProgress(points.length / 3);
@@ -163,13 +133,50 @@ export async function captureDepth(overlay, onProgress) {
             }
           }
         }
+        session.requestAnimationFrame(frame);
       } catch (error) {
         failed = captureFailure(error);
         stop();
-        return;
       }
-      session.requestAnimationFrame(frame);
     };
-    session.requestAnimationFrame(frame);
+    const start = async () => {
+      let requesting = true;
+      try {
+        const acquired = await navigator.xr.requestSession("immersive-ar", {
+          requiredFeatures: ["depth-sensing", "dom-overlay"],
+          depthSensing: {
+            usagePreference: ["cpu-optimized"],
+            dataFormatPreference: ["float32", "luminance-alpha"],
+          },
+          domOverlay: { root: overlay },
+        });
+        if (settled) {
+          await Promise.resolve().then(() => acquired.end()).catch(() => {});
+          return;
+        }
+        session = acquired;
+        requesting = false;
+        session.addEventListener("end", onEnd, { once: true });
+        gl = document.createElement("canvas").getContext("webgl2", { xrCompatible: true, alpha: true });
+        if (!gl) throw Error("WebGL is unavailable.");
+        await gl.makeXRCompatible();
+        if (settled) return;
+        session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
+        space = await session.requestReferenceSpace("local");
+        if (settled) return;
+        finishButton.disabled = false;
+        session.requestAnimationFrame(frame);
+      } catch (error) {
+        if (settled) return;
+        const problem = requesting
+          ? Error(error.name === "NotAllowedError"
+            ? "Camera access was not granted. You can try again or import a scan."
+            : "This device or browser does not support WebXR camera depth scanning. Import a GLB or OBJ scan instead.")
+          : captureFailure(error);
+        complete(problem);
+        shutdown().catch(() => {});
+      }
+    };
+    start();
   });
 }
