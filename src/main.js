@@ -7,12 +7,13 @@ import { setupInventoryDrag } from "./inventory-drag.js";
 import { setupAccount } from "./account.js";
 import { pruneScanLinks, transferItem, transferContainer } from "./scan-data.js";
 import {
-  createBackup,
+  createBackupBlob,
+  MAX_BACKUP_BYTES,
   stageBackup,
-  deleteAsset,
+  deleteAssets,
   getAssetScope,
 } from "./scan-storage.js";
-import { initialState, validState, createIndex, descendants } from "./store.js";
+import { initialState, validState, createIndex, descendants, searchInventory } from "./store.js";
 const icons = {
   gear: '<path d="M9.837 5.343L10.437 3.137L13.563 3.137L14.163 5.343L15.178 5.763L17.162 4.628L19.372 6.838L18.237 8.822L18.657 9.837L20.863 10.437L20.863 13.563L18.657 14.163L18.237 15.178L19.372 17.162L17.162 19.372L15.178 18.237L14.163 18.657L13.563 20.863L10.437 20.863L9.837 18.657L8.822 18.237L6.838 19.372L4.628 17.162L5.763 15.178L5.343 14.163L3.137 13.563L3.137 10.437L5.343 9.837L5.763 8.822L4.628 6.838L6.838 4.628L8.822 5.763Z"/><circle cx="12" cy="12" r="3"/>',
   move: '<path d="M3 8h16m-4-4 4 4-4 4M21 16H5m4-4-4 4 4 4"/>',
@@ -57,7 +58,9 @@ let index = createIndex(state),
   current = null,
   query = "",
   view = "rooms",
-  highlight = null;
+  highlight = null,
+  itemPage = 0;
+const ITEMS_PER_PAGE = 100;
 const root = document.querySelector("#app");
 let cancelDrag = () => {};
 const account = setupAccount({
@@ -68,6 +71,7 @@ const account = setupAccount({
     query = "";
     view = "rooms";
     highlight = null;
+    itemPage = 0;
     render();
   },
 });
@@ -86,9 +90,10 @@ function save(next) {
   }
   state = next;
   index = createIndex(state);
-  for (const scan of previousScans)
-    if (!next.scans.some((s) => s.assetId === scan.assetId))
-      deleteAsset(scan.assetId).catch(() => {});
+  const retainedAssets = new Set(next.scans.map((scan) => scan.assetId));
+  const removedAssets = [...new Set(previousScans.map((scan) => scan.assetId))]
+    .filter((id) => !retainedAssets.has(id));
+  deleteAssets(removedAssets).catch(() => {});
   return true;
 }
 function navigate(id = null, itemId = null) {
@@ -96,6 +101,8 @@ function navigate(id = null, itemId = null) {
   highlight = itemId;
   query = "";
   view = "rooms";
+  const itemOffset = itemId ? (index.items.get(id) || []).findIndex((item) => item.id === itemId) : 0;
+  itemPage = Math.floor(Math.max(0, itemOffset) / ITEMS_PER_PAGE);
   history.pushState(null, "", id ? `#room/${encodeURIComponent(id)}` : "#");
   render();
   if (itemId)
@@ -147,10 +154,25 @@ function breadcrumb(room) {
     .join("");
 }
 function itemSection(items, all) {
-  return `<section class="items-section"><div class="section-heading"><h2>${all ? "Your inventory" : "Items in this space"} <span>${items.length}</span></h2>${!all ? `<button class="text-button" data-add-item>${icon("plus")} Add item</button>` : ""}</div>${items.length ? `<div class="item-list">${items.map((i) => `<article id="item-${esc(i.id)}" class="item-row ${i.color || "sage"} ${highlight === i.id ? "highlight" : ""}" draggable="true" data-drag-kind="item" data-drag-id="${esc(i.id)}"><div class="item-symbol">${itemImage(i.image) || icon("box")}</div><div class="item-info"><h3>${esc(i.name)}</h3><p>${esc(i.notes || "No extra details")}${all ? `<button class="item-path" data-find="${esc(i.id)}">${esc(index.path(i.locationId))} ${icon("arrow")}</button>` : ""}</p></div><button class="icon-button" data-move-item="${esc(i.id)}" aria-label="Move ${esc(i.name)}">${icon("move")}</button><button class="icon-button" data-edit-item="${esc(i.id)}" aria-label="Settings for ${esc(i.name)}" title="Edit or move ${esc(i.name)}">${icon("gear")}</button><button class="icon-button" data-delete-item="${esc(i.id)}" aria-label="Delete ${esc(i.name)}">${icon("trash")}</button></article>`).join("")}</div>` : `<div class="empty-items">${icon("box")}<h3>A place for your first find.</h3><p>${all ? "Open a room to add your first item." : "Add an item and a few details so it’s easy to find later."}</p>${!all ? '<button class="secondary" data-add-item>Add your first item</button>' : ""}</div>`}</section>`;
+  const pages = Math.ceil(items.length / ITEMS_PER_PAGE);
+  itemPage = Math.max(0, Math.min(itemPage, pages - 1));
+  const visible = items.slice(itemPage * ITEMS_PER_PAGE, (itemPage + 1) * ITEMS_PER_PAGE);
+  const pagination = pages > 1 ? `<nav class="item-pagination" aria-label="Inventory pages"><button class="secondary" data-item-page="${itemPage - 1}" ${itemPage === 0 ? "disabled" : ""}>Previous items</button><span role="status">Page ${itemPage + 1} of ${pages}</span><button class="secondary" data-item-page="${itemPage + 1}" ${itemPage + 1 === pages ? "disabled" : ""}>Next items</button></nav>` : "";
+  return `<section class="items-section"><div class="section-heading"><h2>${all ? "Your inventory" : "Items in this space"} <span>${items.length}</span></h2>${!all ? `<button class="text-button" data-add-item>${icon("plus")} Add item</button>` : ""}</div>${items.length ? `<div class="item-list">${visible.map((i) => `<article id="item-${esc(i.id)}" class="item-row ${i.color || "sage"} ${highlight === i.id ? "highlight" : ""}" draggable="true" data-drag-kind="item" data-drag-id="${esc(i.id)}"><div class="item-symbol">${itemImage(i.image) || icon("box")}</div><div class="item-info"><h3>${esc(i.name)}</h3><p>${esc(i.notes || "No extra details")}${all ? `<button class="item-path" data-find="${esc(i.id)}">${esc(index.path(i.locationId))} ${icon("arrow")}</button>` : ""}</p></div><button class="icon-button" data-move-item="${esc(i.id)}" aria-label="Move ${esc(i.name)}">${icon("move")}</button><button class="icon-button" data-edit-item="${esc(i.id)}" aria-label="Settings for ${esc(i.name)}" title="Edit or move ${esc(i.name)}">${icon("gear")}</button><button class="icon-button" data-delete-item="${esc(i.id)}" aria-label="Delete ${esc(i.name)}">${icon("trash")}</button></article>`).join("")}</div>${pagination}` : `<div class="empty-items">${icon("box")}<h3>A place for your first find.</h3><p>${all ? "Open a room to add your first item." : "Add an item and a few details so it’s easy to find later."}</p>${!all ? '<button class="secondary" data-add-item>Add your first item</button>' : ""}</div>`}</section>`;
 }
 function bind() {
   account.bind();
+  root.querySelectorAll("[data-item-page]").forEach((button) => {
+    button.onclick = () => {
+      const direction = Number(button.dataset.itemPage) > itemPage ? "Next items" : "Previous items";
+      itemPage = Number(button.dataset.itemPage);
+      render();
+      const buttons = [...root.querySelectorAll("[data-item-page]")];
+      (buttons.find((entry) => entry.textContent === direction && !entry.disabled)
+        || buttons.find((entry) => !entry.disabled))?.focus();
+      root.querySelector(".items-section")?.scrollIntoView({ block: "start" });
+    };
+  });
   root.querySelectorAll("[data-location-settings]").forEach((button) => {
     button.onclick = () => editLocation(index.byId.get(button.dataset.locationSettings), null);
   });
@@ -186,6 +208,7 @@ function bind() {
     current = null;
     view = "items";
     query = "";
+    itemPage = 0;
     history.pushState(null, "", "#items");
     render();
   };
@@ -259,33 +282,10 @@ function showSearch() {
     panel.hidden = true;
     return;
   }
-  const terms = q.split(/\s+/),
-    matches = index.search.filter((i) =>
-      terms.every((t) => i.text.includes(t)),
-    ),
-    locs = state.locations.filter((l) =>
-      terms.every((t) =>
-        `${l.name} ${l.description}`.toLowerCase().includes(t),
-      ),
-    );
+  const { total, results } = searchInventory(index, q);
   panel.hidden = false;
-  panel.innerHTML = `<div class="results-label">${matches.length + locs.length} results${matches.length + locs.length > 30 ? " · showing first 30" : ""}</div>${
-    [
-      ...matches.map((i) => ({
-        id: i.locationId,
-        item: i.id,
-        name: i.name,
-        path: i.path,
-        type: "box",
-      })),
-      ...locs.map((l) => ({
-        id: l.id,
-        name: l.name,
-        path: index.path(l.id),
-        type: "folder",
-      })),
-    ]
-      .slice(0, 30)
+  panel.innerHTML = `<div class="results-label">${total} results${total > 30 ? " · showing first 30" : ""}</div>${
+    results
       .map(
         (r) =>
           `<button class="search-result" data-target="${esc(r.id)}" data-item="${esc(r.item || "")}">${icon(r.type)}<span><strong>${esc(r.name)}</strong><small>${esc(r.path)}</small></span>${icon("arrow")}</button>`,
@@ -315,9 +315,7 @@ function colorFields(selected = "sage") {
   return `<fieldset><legend>Color</legend><div class="color-options">${["sage", "sand", "blue", "rose"].map((color) => `<label class="color-option ${color}"><input type="radio" name="color" value="${color}" ${selected === color ? "checked" : ""}><span>${color}</span></label>`).join("")}</div></fieldset>`;
 }
 function destinationOptions(selected, excluded = new Set()) {
-  return state.locations.filter((l) => !excluded.has(l.id))
-    .map((l) => ({ id: l.id, path: index.path(l.id) }))
-    .sort((a, b) => a.path.localeCompare(b.path))
+  return index.sortedLocations().filter((l) => !excluded.has(l.id))
     .map((l) => `<option value="${esc(l.id)}" ${l.id === selected ? "selected" : ""}>${esc(l.path)}${l.id === selected ? " (current)" : ""}</option>`).join("");
 }
 function showSettingsError(dialog, message) {
@@ -472,6 +470,9 @@ function editItem(item) {
         })
       ) {
         d.close();
+        const visibleItems = view === "items" ? state.items : index.items.get(current) || [];
+        const savedOffset = visibleItems.findIndex((saved) => saved.id === entry.id);
+        if (savedOffset >= 0) itemPage = Math.floor(savedOffset / ITEMS_PER_PAGE);
         render();
         toast("Item saved. Right where it belongs.");
       } else {
@@ -525,10 +526,8 @@ function toast(message, error = false) {
 async function exportData() {
   try {
     toast("Preparing a full backup, including room scans…");
-    const backup = await createBackup(state);
-    const url = URL.createObjectURL(
-      new Blob([JSON.stringify(backup)], { type: "application/json" }),
-    );
+    const backup = await createBackupBlob(state);
+    const url = URL.createObjectURL(backup);
     const a = document.createElement("a");
     a.href = url;
     a.download = `haven-backup-${new Date().toISOString().slice(0, 10)}.json`;
@@ -547,7 +546,7 @@ function importData() {
     try {
       const file = input.files[0];
       if (!file) return;
-      if (file.size > 250_000_000)
+      if (file.size > MAX_BACKUP_BYTES)
         throw Error("This backup exceeds the 250 MB restore limit.");
       const parsed = JSON.parse(await file.text());
       const modern = parsed.format === "haven-backup" && parsed.version === 2;
@@ -605,8 +604,8 @@ function importData() {
   input.click();
 }
 function scanSection(room) {
-  const scan = state.scans?.find((s) => s.locationId === room.id);
-  const count = state.markers?.filter((m) => m.scanId === scan?.id).length || 0;
+  const scan = index.scanByLocation.get(room.id);
+  const count = index.markersByScan.get(scan?.id)?.length || 0;
   return `<section class="scan-entry"><div class="scan-entry-icon">◇</div><div><h2>${scan ? "Your space, mapped out." : "See your space in 3D."}</h2><p>${scan ? `${esc(scan.name)} · ${count} markers` : "Import a room scan or capture depth on a compatible phone. Pin items and containers right where they belong."}</p></div><button class="secondary" data-room-scan>${scan ? "Open 3D scan" : "Add 3D scan"}</button></section>`;
 }
 let scanOpening = false;
@@ -619,6 +618,7 @@ async function showRoomScan() {
     if (current !== id) return;
     await openScanViewer(id, {
       getState: () => state,
+      getIndex: () => index,
       getScope: () => account.uid,
       save,
       navigate,
@@ -701,6 +701,7 @@ function moveItem(id) {
   );
 }
 function route() {
+  itemPage = 0;
   const hash = location.hash.slice(1);
   if (hash === "items") {
     view = "items";

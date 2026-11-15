@@ -1,110 +1,10 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { getAsset, putAsset, deleteAsset } from "./scan-storage.js";
 import { createIndex, descendants } from "./store.js";
 import { captureDepth } from "./capture-depth.js";
 import "./scan.css";
-
-export function disposeObject(object) {
-  const textures = new Set(),
-    materials = new Set(),
-    geometries = new Set();
-  object?.traverse((child) => {
-    if (child.geometry) geometries.add(child.geometry);
-    for (const material of (Array.isArray(child.material)
-      ? child.material
-      : [child.material]
-    ).filter(Boolean)) {
-      materials.add(material);
-      for (const value of Object.values(material))
-        if (value?.isTexture) textures.add(value);
-    }
-  });
-  for (const texture of textures) {
-    texture.source?.data?.close?.();
-    texture.dispose();
-  }
-  for (const material of materials) material.dispose();
-  for (const geometry of geometries) geometry.dispose();
-}
-async function readObject(blob, format) {
-  let object;
-  try {
-    if (format === "obj") object = new OBJLoader().parse(await blob.text());
-    else if (format === "points") {
-      const buffer = await blob.arrayBuffer();
-      if (buffer.byteLength % 12 !== 0 || buffer.byteLength < 12)
-        throw Error("Invalid depth scan.");
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute(
-        "position",
-        new THREE.BufferAttribute(new Float32Array(buffer), 3),
-      );
-      object = new THREE.Points(
-        geometry,
-        new THREE.PointsMaterial({
-          color: 0x9abda5,
-          size: 0.035,
-          sizeAttenuation: true,
-        }),
-      );
-    } else {
-      const manager = new THREE.LoadingManager();
-      manager.setURLModifier((url) => {
-        if (!url.startsWith("blob:") && !url.startsWith("data:"))
-          throw Error(
-            "Export a self-contained GLB with embedded textures. External scan resources are not loaded.",
-          );
-        return url;
-      });
-      object = (
-        await new GLTFLoader(manager).parseAsync(await blob.arrayBuffer(), "")
-      ).scene;
-    }
-    let vertices = 0;
-    object.traverse((child) => {
-      const positions = child.geometry?.getAttribute("position");
-      if (positions) {
-        vertices += positions.count;
-        for (let n = 0; n < positions.array.length; n++)
-          if (!Number.isFinite(positions.array[n]))
-            throw Error("This scan contains invalid coordinates.");
-      }
-      if (child.isMesh) {
-        for (const m of Array.isArray(child.material)
-          ? child.material
-          : [child.material])
-          m.side = THREE.DoubleSide;
-      }
-    });
-    if (!vertices)
-      throw Error("This file does not contain a 3D surface or depth points.");
-    if (vertices > 2_000_000)
-      throw Error(
-        "This scan is too detailed. Export a simplified model with fewer than two million vertices.",
-      );
-    object.updateMatrixWorld(true);
-    const bounds = new THREE.Box3().setFromObject(object),
-      size = bounds.getSize(new THREE.Vector3());
-    if (
-      bounds.isEmpty() ||
-      !Number.isFinite(size.length()) ||
-      size.length() < 0.00001
-    )
-      throw Error("This scan has no usable dimensions.");
-    return object;
-  } catch (error) {
-    disposeObject(object);
-    throw Error(
-      error.message?.includes("DRACO")
-        ? "This scan uses Draco compression. Export an uncompressed GLB or OBJ."
-        : error.message ||
-            "Could not read this scan. Export a GLB or OBJ and try again.",
-    );
-  }
-}
+import { readObject, disposeObject } from "./scan-model.js";
 
 export async function openScanViewer(locationId, api) {
   const openScope = api.getScope?.() || null;
@@ -132,10 +32,18 @@ export async function openScanViewer(locationId, api) {
     busy = false,
     placement = false,
     epoch = 0;
-  const scan = () =>
-    api.getState().scans?.find((s) => s.locationId === locationId);
-  const markers = () =>
-    api.getState().markers?.filter((m) => m.scanId === scan()?.id) || [];
+  let indexedState, cachedIndex;
+  const inventoryIndex = () => {
+    if (api.getIndex) return api.getIndex();
+    const state = api.getState();
+    if (state !== indexedState) {
+      cachedIndex = createIndex(state);
+      indexedState = state;
+    }
+    return cachedIndex;
+  };
+  const scan = () => inventoryIndex().scanByLocation.get(locationId);
+  const markers = () => inventoryIndex().markersByScan.get(scan()?.id) || [];
   const tell = (message, error = false) => {
     status.textContent = message;
     status.classList.toggle("scan-error", error);
@@ -158,12 +66,12 @@ export async function openScanViewer(locationId, api) {
   };
   const snapshot = () => {
     const s = api.getState();
-    return { state: s, index: createIndex(s) };
+    return { state: s, index: inventoryIndex() };
   };
   const targetOf = (m) =>
     m.kind === "item"
-      ? api.getState().items.find((i) => i.id === m.targetId)
-      : api.getState().locations.find((l) => l.id === m.targetId);
+      ? inventoryIndex().itemById.get(m.targetId)
+      : inventoryIndex().byId.get(m.targetId);
   const markerButtons = new Map();
   const close = () => {
     if (busy) {
@@ -458,7 +366,7 @@ export async function openScanViewer(locationId, api) {
             },
           ];
       } else {
-        const currentIndex = createIndex(s),
+        const currentIndex = inventoryIndex(),
           allowed = descendants(currentIndex, locationId);
         const stillValid =
           kind === "item"

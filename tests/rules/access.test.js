@@ -17,6 +17,7 @@ import {
   deleteDoc,
 } from "firebase/firestore";
 import { removeFirestoreAccount } from "../../src/firestore-delete-account.js";
+import { removeObsoleteSnapshots } from "../../src/firestore-cleanup.js";
 let environment;
 before(async () => {
   environment = await initializeTestEnvironment({
@@ -137,4 +138,25 @@ test("another user cannot delete an account or its chunks", async () => {
     deleteIdentity: async () => { throw Error("Must not reach identity deletion"); },
   }));
   await assertSucceeds(getDoc(doc(owner, "users", uid, "chunks", "private-0")));
+});
+
+test("cleanup sweeps historical snapshots in pages while preserving current and previous", async () => {
+  const uid = "cleanup-owner", db = environment.authenticatedContext(uid).firestore();
+  await snapshot(db, uid, 1, "cleanup-first", null);
+  await snapshot(db, uid, 2, "cleanup-second", { snapshotId: "cleanup-first", chunkCount: 1 });
+  await snapshot(db, uid, 3, "cleanup-third", { snapshotId: "cleanup-second", chunkCount: 1 });
+  await environment.withSecurityRulesDisabled(async (context) => {
+    const admin = context.firestore(), batch = writeBatch(admin);
+    for (let index = 0; index < 17; index++) batch.set(doc(admin, "users", uid, "chunks", `historical-${index}`), {
+      snapshotId: "historical", index, payload: "{}",
+    });
+    await batch.commit();
+  });
+  await removeObsoleteSnapshots(db, uid, () => {});
+  assert.deepEqual((await getDocs(collection(db, "users", uid, "chunks"))).docs.map((d) => d.id).sort(),
+    ["cleanup-second-0", "cleanup-third-0"]);
+  await removeObsoleteSnapshots(db, uid, () => {});
+  assert.equal((await getDocs(collection(db, "users", uid, "chunks"))).size, 2);
+  const other = environment.authenticatedContext("cleanup-other").firestore();
+  await assertFails(removeObsoleteSnapshots(other, uid, () => {}));
 });

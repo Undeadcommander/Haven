@@ -224,3 +224,11 @@
 .location-image-preview .item-art { padding: 16px; }
 .item-symbol { width: 44px; height: 44px; flex-shrink: 0; overflow: hidden; }
 .item-symbol:has(.location-photo) { padding: 0; }
+.item-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 1rem;
+}

@@ -17,11 +17,11 @@ import {
   runTransaction,
   serverTimestamp,
   getDoc,
-  writeBatch,
 } from "firebase/firestore";
 import { encodeInventory, decodeInventory } from "./firestore-inventory.js";
 import { isDeletingRecord } from "./delete-account-data.js";
 import { removeFirestoreAccount } from "./firestore-delete-account.js";
+import { createCleanupScheduler, removeObsoleteSnapshots } from "./firestore-cleanup.js";
 
 export function friendlyAuthError(error) {
   const messages = {
@@ -58,6 +58,10 @@ export async function createFirebaseService(config) {
     if (!auth.currentUser || auth.currentUser.uid !== uid)
       throw Error("The account changed. Sign in again before syncing.");
   };
+  const cleanup = createCleanupScheduler({
+    cleanup: (uid) => removeObsoleteSnapshots(db, uid, () => owned(uid)),
+    isActive: (uid) => auth.currentUser?.uid === uid,
+  });
   const wrap = async (operation) => {
     try {
       return await operation();
@@ -72,7 +76,10 @@ export async function createFirebaseService(config) {
   };
 
   return {
-    watchAuth: (callback) => onAuthStateChanged(auth, callback),
+    watchAuth: (callback) => onAuthStateChanged(auth, (user) => {
+      cleanup.cancelExcept(user?.uid);
+      callback(user);
+    }),
     login: () => wrap(() => signInWithPopup(auth, provider)),
     logout: () => signOut(auth),
     reauthenticate: (uid) => wrap(async () => {
@@ -96,6 +103,7 @@ export async function createFirebaseService(config) {
           // Do not treat an offline cache miss as a new, empty account.
           if (snapshot.metadata.fromCache) return;
           onValue(snapshot.exists() ? snapshot.data() : null);
+          if (!snapshot.metadata.hasPendingWrites) cleanup.schedule(uid);
         },
         (e) => onError(Error(friendlyAuthError(e))),
       ),
@@ -126,7 +134,6 @@ export async function createFirebaseService(config) {
         owned(uid);
         const chunks = encodeInventory(inventory),
           snapshotId = crypto.randomUUID();
-        let obsolete = null;
         const result = await runTransaction(db, async (tx) => {
           owned(uid);
           const reference = doc(db, "users", uid),
@@ -140,7 +147,6 @@ export async function createFirebaseService(config) {
             error.remote = remote;
             throw error;
           }
-          obsolete = remote?.previous || null;
           for (let index = 0; index < chunks.length; index++)
             tx.set(doc(db, "users", uid, "chunks", `${snapshotId}-${index}`), {
               snapshotId,
@@ -158,20 +164,7 @@ export async function createFirebaseService(config) {
           });
           return revision + 1;
         });
-        if (
-          obsolete &&
-          /^[A-Za-z0-9-]+$/.test(obsolete.snapshotId) &&
-          Number.isInteger(obsolete.chunkCount) &&
-          obsolete.chunkCount > 0 &&
-          obsolete.chunkCount <= 64
-        ) {
-          const batch = writeBatch(db);
-          for (let i = 0; i < obsolete.chunkCount; i++)
-            batch.delete(
-              doc(db, "users", uid, "chunks", `${obsolete.snapshotId}-${i}`),
-            );
-          batch.commit().catch(() => {});
-        }
+        cleanup.schedule(uid);
         return result;
       }),
   };
