@@ -65,6 +65,23 @@ test("system preference, invalid saved values, and blocked storage have a usable
   await expect(page.getByRole("status")).toContainText("Theme changed for this session");
 });
 
+test("main search has a themed border and focus highlight", async ({ page }) => {
+  await page.goto("/");
+  const search = page.locator(".search-wrap");
+  for (const theme of themes) {
+    await page.getByRole("combobox", { name: "Color theme" }).selectOption(theme);
+    await page.getByRole("searchbox", { name: "Search items and rooms" }).blur();
+    await expect(search).toHaveCSS("border-width", "1px");
+    await expect(search).toHaveCSS("border-style", "solid");
+    await expect(search).toHaveCSS("border-radius", "8px");
+    const border = await page.locator(".search-wrap > kbd").evaluate((element) => getComputedStyle(element).borderColor);
+    await expect(search).toHaveCSS("border-color", border);
+    await page.getByRole("searchbox", { name: "Search items and rooms" }).focus();
+    const accent = await search.evaluate((element) => getComputedStyle(element).color);
+    await expect(search).toHaveCSS("border-color", accent);
+  }
+});
+
 test("all themes fit a narrow mobile screen", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 740 });
   await page.goto("/");

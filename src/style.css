@@ -215,6 +215,9 @@ header {
   align-items: center;
   gap: 12px;
   color: #8d978e;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
 }
 .search-wrap > input {
   min-width: 0;
@@ -228,6 +231,7 @@ header {
 }
 .search-wrap:focus-within {
   color: #284c3e;
+  border-color: var(--accent, #284c3e);
 }
 .search-wrap > input::placeholder {
   color: #939d94;
