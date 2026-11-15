@@ -2,7 +2,7 @@
 
 A lightweight home inventory app. Start with one room, add rooms and nested containers, and record exactly where each item belongs. Search by item name, notes, or location; a result opens and highlights the item in its container.
 
-## Development - for users ignore this and Checks
+## Development - users ignore this and Checks
 
 Requires Node.js 20.19+ or 22.12+ (validated with Node 24).
 
@@ -73,8 +73,9 @@ Validation includes GLB and OBJ loading, mouse/touch placement, linking existing
 See [Firebase account setup](firebase/SETUP.md). The integration requires a real Firebase project with Google Authentication, Firestore, and private access rules. The public configuration is in `src/firebase-config.json`; it now contains the public configuration for `sign-in-for-haven`. Authentication, Firestore setup, and rules must also be enabled in that project. Never commit a service-account key.
 
 Use **Sign in → Continue with Google** to create or access an account. Existing guest data is copied only through the explicit **Copy device inventory to account** action. If a copy fails before its inventory is saved, its staged scan files are removed. Account status reports pending, saving, saved, failed, and conflicting changes. Each account has a separate local cache; scan files remain on the originating device and can be transferred through backups.
+
 ### Account deletion
 
-Under **Account → Delete account**, review the consequences, slide the handle from right to left, and confirm after the five-second wait. Every confirmation has Cancel; the final Cancel is prominent and focused by default. Keyboard users can move the slider with Left Arrow and confirm with Enter. Deletion requires a fresh Google verification and removes the Haven authentication account, all Firestore inventory chunks (including older snapshots), the profile, and that account's local cache, recovery copy, and scan files on this browser. The Google account, separate guest inventory, other accounts, downloaded backups, and local copies on other devices are not deleted.
+Deletion requires a fresh Google verification and removes the Haven authentication account, all Firestore inventory chunks (including older snapshots), the profile, and that account's local cache, recovery copy, and scan files on this browser. The Google account, separate guest inventory, other accounts, downloaded backups, and local copies on other devices are not deleted.
 
 Sync pauses before deletion and waits for any submitted upload to settle. A temporary Firestore revision marker tells active clients to pause too. If cleanup fails, authentication is retained until cloud cleanup succeeds, and the deletion remains paused across reloads; use **Delete account** again to finish. This is a client-driven flow, so keep the page open until it completes.
