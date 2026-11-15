@@ -1,18 +1,10 @@
 // Inventory metadata stays small; binary room scans live in IndexedDB.
+import { createLocationTree } from "./location-tree.js";
 export function pruneScanLinks(state) {
-  const locations = new Map(state.locations.map((l) => [l.id, l]));
+  const { byId: locations, contains } = createLocationTree(state.locations);
   const items = new Map(state.items.map((i) => [i.id, i]));
   const scans = (state.scans || []).filter((s) => locations.has(s.locationId));
   const byId = new Map(scans.map((s) => [s.id, s]));
-  const belongs = (id, ancestor) => {
-    const seen = new Set();
-    while (id && !seen.has(id)) {
-      if (id === ancestor) return true;
-      seen.add(id);
-      id = locations.get(id)?.parentId;
-    }
-    return false;
-  };
   const markers = (state.markers || []).filter((m) => {
     const scan = byId.get(m.scanId);
     const location =
@@ -22,7 +14,7 @@ export function pruneScanLinks(state) {
     return (
       scan &&
       location &&
-      belongs(location, scan.locationId) &&
+      contains(scan.locationId, location) &&
       (m.kind !== "container" || location !== scan.locationId)
     );
   });
@@ -59,7 +51,7 @@ export function transferContainer(state, id, parentId) {
     const next = stack.pop();
     if (moved.has(next)) continue;
     moved.add(next);
-    stack.push(...(children.get(next) || []));
+    for (const child of children.get(next) || []) stack.push(child);
   }
   if (moved.has(parentId))
     throw Error("A container cannot be moved into itself or anything inside it.");

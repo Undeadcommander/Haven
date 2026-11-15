@@ -4,10 +4,9 @@ import { openAccountDeletion } from "./account-deletion.js";
 import { deletionKey } from "./delete-account-data.js";
 import { initialState, validState } from "./store.js";
 import {
-  getAsset,
-  putAsset,
+  copyAssets,
   setAssetScope,
-  createBackup,
+  createBackupBlob,
   deleteAccountAssets,
 } from "./scan-storage.js";
 const configured = !!(
@@ -32,7 +31,8 @@ export function setupAccount(api) {
     problem = "",
     dialog = null,
     deletionFlow = null,
-    authEpoch = 0;
+    authEpoch = 0,
+    copyingGuest = false;
   const sync = new AccountSync({
     storage: localStorage,
     remote: {},
@@ -197,6 +197,7 @@ export function setupAccount(api) {
         }
       };
       dialog.querySelector("[data-copy-guest]").onclick = async () => {
+        if (copyingGuest) return;
         if (sync.status === "connecting" || sync.status === "conflict") {
           problem =
             "Finish loading or resolve the account conflict before copying.";
@@ -209,37 +210,42 @@ export function setupAccount(api) {
           )
         )
           return;
-        const uid = user.uid;
+        const uid = user.uid, epoch = authEpoch, base = sync.record.inventory;
+        let staged, committed = false;
+        copyingGuest = true;
+        dialog.querySelector("[data-copy-guest]").disabled = true;
         try {
           const source = guest(),
-            merged = mergeGuestInventory(sync.record.inventory, source);
-          for (const [oldId, newId] of merged.assets) {
-            const blob = await getAsset(oldId, null);
-            if (!blob)
-              throw Error(
-                "A device scan is missing. Restore its backup before copying.",
-              );
-            await putAsset(newId, blob, uid);
-          }
-          if (user?.uid !== uid)
+            merged = mergeGuestInventory(base, source);
+          staged = await copyAssets(merged.assets, null, uid);
+          if (user?.uid !== uid || authEpoch !== epoch)
             throw Error("The account changed. Please try again.");
+          if (sync.record.inventory !== base)
+            throw Error("Your inventory changed during the copy. Please try again.");
           sync.saveLocal(merged.inventory);
+          committed = true;
           api.replace(merged.inventory);
           problem = "";
           update();
         } catch (error) {
-          problem = error.message;
+          let message = error.message;
+          if (staged && !committed) {
+            try { await staged.rollback(); }
+            catch { message += " Copied files could not be cleaned up; browser storage is unavailable."; }
+          }
+          if (user?.uid === uid) problem = message;
+        } finally {
+          copyingGuest = false;
           update();
         }
       };
+      dialog.querySelector("[data-copy-guest]").disabled = copyingGuest;
       dialog.querySelector("[data-recovery]").onclick = async () => {
         try {
           const raw = localStorage.getItem(`haven-recovery:${user.uid}`);
           if (!raw) throw Error("There is no recovery copy on this device.");
-          const backup = await createBackup(JSON.parse(raw), user.uid);
-          const url = URL.createObjectURL(
-            new Blob([JSON.stringify(backup)], { type: "application/json" }),
-          );
+          const backup = await createBackupBlob(JSON.parse(raw), user.uid);
+          const url = URL.createObjectURL(backup);
           const a = document.createElement("a");
           a.href = url;
           a.download = "haven-recovery.json";
