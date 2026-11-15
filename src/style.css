@@ -526,6 +526,13 @@ main {
   color: #98a08e;
   white-space: nowrap;
 }
+.container-path {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted-ink);
+  overflow-wrap: anywhere;
+}
 .card-body > p {
   font-size: 11px;
   color: #929a8c;
@@ -1133,6 +1140,19 @@ legend {
   }
   .item-symbol {
     padding: 7px;
+  }
+}
+@media (max-width: 540px) {
+  .sidebar {
+    flex-wrap: wrap;
+  }
+  .sidebar > .brand {
+    width: 100%;
+  }
+  .sidebar > .nav-link {
+    flex: 1;
+    justify-content: center;
+    white-space: nowrap;
   }
 }
 @media (max-width: 440px) {
