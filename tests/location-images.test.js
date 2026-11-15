@@ -38,20 +38,46 @@ test("location images validate and survive account snapshot encoding", () => {
 });
 
 
-test("photo crops keep a landscape frame inside the source at every zoom and position", async () => {
+test("photo crops start centered with a landscape frame inside the source", async () => {
   const { photoCrop } = await import("../src/photo-editor.js");
   assert.deepEqual(photoCrop(1600, 800), { x: 0, y: 0, width: 1600, height: 800 });
   assert.deepEqual(photoCrop(800, 1600), { x: 0, y: 600, width: 800, height: 400 });
-  assert.deepEqual(photoCrop(1600, 800, { zoom: 2, x: 1, y: 0 }), { x: 800, y: 0, width: 800, height: 400 });
-  assert.deepEqual(photoCrop(1600, 800, { zoom: 2, x: -1, y: 2 }), { x: 0, y: 400, width: 800, height: 400 });
   for (const [width, height] of [[1600, 800], [800, 1600], [1, 1], [5000, 30]]) {
-    for (const zoom of [0, 1, 1.5, 3, 4]) {
-      for (const x of [0, .5, 1]) for (const y of [0, .5, 1]) {
-        const crop = photoCrop(width, height, { zoom, x, y });
+    const crop = photoCrop(width, height);
+    assert.ok(crop.x >= 0 && crop.y >= 0);
+    assert.ok(crop.x + crop.width <= width);
+    assert.ok(crop.y + crop.height <= height);
+    assert.equal(crop.width / crop.height, 2);
+  }
+});
+
+test("each crop handle resizes its edges and leaves the opposite edges anchored", async () => {
+  const { adjustPhotoCrop } = await import("../src/photo-editor.js");
+  const rect = { x: 100, y: 100, width: 600, height: 300 };
+  for (const handle of ["n", "ne", "e", "se", "s", "sw", "w", "nw"]) {
+    const crop = adjustPhotoCrop(rect, handle, 25, 30, 1000, 500);
+    assert.equal(crop.x, handle.includes("w") ? 125 : 100);
+    assert.equal(crop.y, handle.includes("n") ? 130 : 100);
+    assert.equal(crop.x + crop.width, handle.includes("e") ? 725 : 700);
+    assert.equal(crop.y + crop.height, handle.includes("s") ? 430 : 400);
+  }
+});
+
+test("crop handles cannot cross or leave the image, and moving preserves size", async () => {
+  const { adjustPhotoCrop, photoCrop } = await import("../src/photo-editor.js");
+  for (const [width, height] of [[1600, 800], [800, 1600], [1, 1], [5000, 30]]) {
+    const rect = photoCrop(width, height);
+    for (const handle of ["n", "ne", "e", "se", "s", "sw", "w", "nw", "move"]) {
+      for (const dx of [-10000, 0, 10000]) for (const dy of [-10000, 0, 10000]) {
+        const crop = adjustPhotoCrop(rect, handle, dx, dy, width, height);
         assert.ok(crop.x >= 0 && crop.y >= 0);
+        assert.ok(crop.width > 0 && crop.height > 0);
         assert.ok(crop.x + crop.width <= width + .00001);
         assert.ok(crop.y + crop.height <= height + .00001);
-        assert.equal(crop.width / crop.height, 2);
+        if (handle === "move") {
+          assert.equal(crop.width, rect.width);
+          assert.equal(crop.height, rect.height);
+        }
       }
     }
   }

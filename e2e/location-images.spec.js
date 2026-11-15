@@ -162,10 +162,20 @@ async function patternedPhoto(page) {
   return { name: "quadrants.png", mimeType: "image/png", buffer: Buffer.from(base64, "base64") };
 }
 
-const setRange = (page, name, value) => page.getByRole("slider", { name, exact: true }).evaluate((input, value) => {
-  input.value = value;
-  input.dispatchEvent(new Event("input", { bubbles: true }));
-}, value);
+const cropRect = (page) => page.locator("[data-photo-selection]").evaluate((element) =>
+  Object.fromEntries(["left", "top", "width", "height"].map(key => [key, parseFloat(element.style[key])])));
+
+async function dragCrop(page, handle, dx, dy) {
+  const target = page.locator(handle === "move" ? "[data-photo-selection]" : `[data-crop-handle="${handle}"]`);
+  await target.scrollIntoViewIfNeeded();
+  const bounds = await target.boundingBox();
+  const stage = await page.locator("[data-photo-stage]").boundingBox();
+  const x = bounds.x + bounds.width / 2, y = bounds.y + bounds.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + dx * stage.width, y + dy * stage.height, { steps: 5 });
+  await page.mouse.up();
+}
 
 async function photoPixels(page, source) {
   return page.evaluate(async (source) => {
@@ -184,8 +194,77 @@ async function photoPixels(page, source) {
   }, source);
 }
 
+test("all eight crop handles resize their edges, support the keyboard, and save a freeform crop", async ({ page }) => {
+  await page.goto("/");
+  await settings(page, "Living room");
+  await page.getByLabel("Upload your own image").setInputFiles(await patternedPhoto(page));
+  for (const handle of ["nw", "n", "ne", "e", "se", "s", "sw", "w"]) {
+    await page.getByRole("button", { name: "Reset crop", exact: true }).click();
+    await dragCrop(page, handle, handle.includes("w") ? .1 : -.1, handle.includes("n") ? .1 : -.1);
+    const crop = await cropRect(page);
+    expect(crop.left).toBeCloseTo(handle.includes("w") ? 10 : 0, 1);
+    expect(crop.top).toBeCloseTo(handle.includes("n") ? 10 : 0, 1);
+    expect(crop.width).toBeCloseTo(/[ew]/.test(handle) ? 90 : 100, 1);
+    expect(crop.height).toBeCloseTo(/[ns]/.test(handle) ? 90 : 100, 1);
+  }
+  await page.getByRole("button", { name: "Reset crop", exact: true }).click();
+  const right = page.getByRole("button", { name: "Resize right edge", exact: true });
+  await right.focus();
+  await right.press("Shift+ArrowLeft");
+  expect((await cropRect(page)).width).toBe(90);
+  await right.press("ArrowRight");
+  expect((await cropRect(page)).width).toBe(91);
+  // Resize only the width: saved pixels must match the freeform selection.
+  await page.getByRole("button", { name: "Use photo", exact: true }).click();
+  const image = await page.locator("[data-image-preview] img").getAttribute("src");
+  const pixels = await photoPixels(page, image);
+  expect(pixels.width).toBe(800);
+  expect(pixels.height).toBe(Math.round(800 * 800 / (1600 * .91)));
+});
+
+test.describe("touch cropping", () => {
+  test.use({ hasTouch: true, viewport: { width: 320, height: 740 } });
+
+  test("touch handles resize a portrait photo and keep the selection inside it", async ({ page }) => {
+    await page.goto("/");
+    await settings(page, "Living room");
+    const base64 = await page.evaluate(() => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 800;
+      canvas.height = 1600;
+      canvas.getContext("2d").fillRect(0, 0, 800, 1600);
+      return canvas.toDataURL("image/png").split(",")[1];
+    });
+    await page.getByLabel("Upload your own image").setInputFiles({ name: "portrait.png", mimeType: "image/png", buffer: Buffer.from(base64, "base64") });
+    const handle = page.getByRole("button", { name: "Resize bottom right corner", exact: true });
+    await handle.scrollIntoViewIfNeeded();
+    const bounds = await handle.boundingBox();
+    const stage = await page.locator("[data-photo-stage]").boundingBox();
+    expect(stage.height).toBeCloseTo(320, 0);
+    const start = await cropRect(page);
+    const x = bounds.x + bounds.width / 2, y = bounds.y + bounds.height / 2;
+    const session = await page.context().newCDPSession(page);
+    await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
+    await session.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x - stage.width * .25, y: y - stage.height * .05 }] });
+    await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    const resized = await cropRect(page);
+    expect(resized.left).toBe(start.left);
+    expect(resized.top).toBe(start.top);
+    expect(resized.width).toBeCloseTo(75, 0);
+    expect(resized.height).toBeCloseTo(20, 0);
+    // Keyboard movement has the same image bounds as a drag.
+    const selection = page.locator("[data-photo-selection]");
+    await selection.focus();
+    for (let i = 0; i < 10; i++) await selection.press("Shift+ArrowDown");
+    const moved = await cropRect(page);
+    expect(moved.top + moved.height).toBeCloseTo(100, 4);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+    await session.detach();
+  });
+});
+
 for (const kind of ["room", "container"]) {
-  test(`${kind} photos crop, zoom, cancel, and keep their color on mobile`, async ({ page }) => {
+  test(`${kind} photos crop by dragging, cancel, and keep their color on mobile`, async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 740 });
     await page.goto(kind === "room" ? "/" : "/#room/living-room");
     if (kind === "room") await page.getByRole("button", { name: "Add room", exact: true }).first().click();
@@ -202,48 +281,42 @@ for (const kind of ["room", "container"]) {
     const bounds = await canvas.boundingBox();
     expect(bounds.x).toBeGreaterThanOrEqual(0);
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(320);
-    await setRange(page, "Zoom", "2");
-    await setRange(page, "Horizontal position", "1");
-    await setRange(page, "Vertical position", "0");
+    await expect(page.locator('[data-photo-editor] input[type="range"]')).toHaveCount(0);
+    await dragCrop(page, "nw", .5, .5);
     await page.getByRole("button", { name: "Reset crop", exact: true }).click();
-    await expect(page.getByRole("slider", { name: "Zoom", exact: true })).toHaveValue("1");
+    expect(await cropRect(page)).toEqual({ left: 0, top: 0, width: 100, height: 100 });
     await page.getByRole("button", { name: "Cancel crop", exact: true }).click();
     await expect(page.locator('input[name="color"]:enabled')).toHaveCount(7);
     await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
     await expect(page.locator("[data-image-preview] img")).toHaveCount(0);
     await page.getByLabel("Upload your own image").setInputFiles(file);
     await expect(canvas).toBeVisible();
-    await setRange(page, "Zoom", "2");
-    await canvas.scrollIntoViewIfNeeded();
-    const dragBounds = await canvas.boundingBox();
-    await page.mouse.move(dragBounds.x + dragBounds.width / 2, dragBounds.y + dragBounds.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(dragBounds.x + dragBounds.width * .75, dragBounds.y + dragBounds.height * .25, { steps: 5 });
-    await page.mouse.up();
-    expect(Number(await page.getByRole("slider", { name: "Horizontal position", exact: true }).inputValue())).toBeLessThan(.5);
-    expect(Number(await page.getByRole("slider", { name: "Vertical position", exact: true }).inputValue())).toBeGreaterThan(.5);
-    await setRange(page, "Horizontal position", "1");
-    await setRange(page, "Vertical position", "0");
+    await dragCrop(page, "nw", .5, .5);
+    await dragCrop(page, "move", 0, -.5);
+    const moved = await cropRect(page);
+    expect(moved.left).toBeCloseTo(50, 0);
+    expect(moved.top).toBeCloseTo(0, 0);
     await page.locator("[data-photo-editor]").screenshot({ path: `test-results/${kind}-photo-crop-mobile.png` });
-    await canvas.focus();
-    await canvas.press("ArrowLeft");
-    await expect(page.getByRole("slider", { name: "Horizontal position", exact: true })).toHaveValue("1");
-    await canvas.press("ArrowRight");
-    await expect(page.getByRole("slider", { name: "Horizontal position", exact: true })).toHaveValue("0.98");
-    await setRange(page, "Horizontal position", "1");
+    const selection = page.locator("[data-photo-selection]");
+    await selection.focus();
+    await selection.press("ArrowRight");
+    expect((await cropRect(page)).left).toBeCloseTo(moved.left, 1);
+    await selection.press("ArrowLeft");
+    expect((await cropRect(page)).left).toBeCloseTo(moved.left - 1, 1);
+    await selection.press("ArrowRight");
     await page.getByRole("button", { name: "Use photo", exact: true }).click();
     await expect(page.locator('input[name="color"]:enabled')).toHaveCount(0);
     const image = await page.locator("[data-image-preview] img").getAttribute("src");
     expect(image.length).toBeLessThanOrEqual(180000);
     const pixels = await photoPixels(page, image);
-    expect(pixels.width).toBe(800);
-    expect(pixels.height).toBe(400);
+    expect(pixels.width).toBeCloseTo(800, -1);
+    expect(pixels.height).toBeCloseTo(400, -1);
     expect(pixels.center[0]).toBeLessThan(50);
     expect(pixels.center[1]).toBeGreaterThan(110);
     expect(pixels.center[2]).toBeLessThan(90);
     await page.getByRole("button", { name: "Adjust photo", exact: true }).click();
-    await expect(page.getByRole("slider", { name: "Zoom", exact: true })).toHaveValue("2");
-    await setRange(page, "Vertical position", "1");
+    expect((await cropRect(page)).width).toBeCloseTo(50, 0);
+    await dragCrop(page, "move", 0, .5);
     await page.getByRole("button", { name: "Cancel crop", exact: true }).click();
     await expect(page.locator("[data-image-preview] img")).toHaveAttribute("src", image);
     await save(page);
@@ -253,12 +326,12 @@ for (const kind of ["room", "container"]) {
     await expect(page.locator('input[name="color"]:enabled')).toHaveCount(0);
     await page.getByRole("button", { name: "Adjust photo", exact: true }).click();
     await expect(canvas).toBeVisible();
-    await setRange(page, "Zoom", "2");
+    await dragCrop(page, "se", -.5, -.5);
     await page.getByRole("button", { name: "Use photo", exact: true }).click();
     const recropped = await page.locator("[data-image-preview] img").getAttribute("src");
     const resized = await photoPixels(page, recropped);
-    expect(resized.width).toBe(400);
-    expect(resized.height).toBe(200);
+    expect(resized.width).toBeCloseTo(400, -1);
+    expect(resized.height).toBeCloseTo(200, -1);
     await save(page);
     await page.reload();
     expect((await saved(page)).locations.find(l => l.name === name)).toMatchObject({ image: recropped, color: "rose" });

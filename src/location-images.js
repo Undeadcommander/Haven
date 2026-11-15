@@ -78,7 +78,7 @@ export function imageFields(kind) {
     <button type="button" class="text-button photo-adjust" data-photo-adjust hidden>Adjust photo</button>
     <div class="image-options">${defaultChoice}${choices.map(([id, name]) => `<label class="image-option"><input type="radio" name="image-choice" value="${id}">${renderImage(id)}<span>${name}</span></label>`).join("")}<label class="image-option" data-custom-choice hidden><input type="radio" name="image-choice" value="custom"><span>Your photo</span></label></div>
     <label>Upload your own image<input type="file" data-image-upload accept="image/jpeg,image/png,image/webp" aria-describedby="image-help"></label>
-    <p id="image-help" class="modal-description">JPG, PNG, or WebP, up to 10 MB. ${kind === "item" ? "Photos are resized to save space." : "Crop and zoom after choosing your photo."}</p></div>
+    <p id="image-help" class="modal-description">JPG, PNG, or WebP, up to 10 MB. ${kind === "item" ? "Photos are resized to save space." : "Drag the crop handles after choosing your photo."}</p></div>
     ${kind === "item" ? "" : photoEditorFields()}<p data-image-status role="status"></p></fieldset>`;
 }
 
@@ -128,7 +128,7 @@ export function bindImagePicker(dialog, initial, fallback, renderImage = locatio
     picker.disabled = false;
     status.textContent = "Adjust your photo, then choose Use photo.";
     refresh();
-    editor.querySelector("[data-photo-canvas]").focus();
+    editor.querySelector("[data-photo-selection]").focus();
   };
   if (editor) {
     editor.querySelector("[data-photo-apply]").onclick = () => {
