@@ -51,7 +51,8 @@ for (const change of ["sign out", "switch accounts", "edit inventory"]) {
 
     if (change === "edit inventory") {
       await page.keyboard.press("Escape");
-      await expect(page.locator(".room-card")).toHaveCount(6);
+      await expect(page.locator(".room-card")).toHaveCount(3);
+      await expect(page.locator("[data-house-name]")).toHaveText("My home (device)");
       await page.getByRole("button", { name: "Add room", exact: true }).first().click();
       await page.getByRole("textbox", { name: "Name", exact: true }).fill("New room after copy");
       await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -62,7 +63,7 @@ for (const change of ["sign out", "switch accounts", "edit inventory"]) {
     }
     await page.evaluate(() => window.releaseCopy());
     await page.waitForFunction(() => window.copyFinished);
-    await expect(page.locator(".room-card")).toHaveCount(change === "edit inventory" ? 7 : 3);
+    await expect(page.locator(".room-card")).toHaveCount(change === "edit inventory" ? 4 : 3);
     const expectedRoom = change === "edit inventory" ? "New room after copy" : change === "sign out" ? "Guest room" : "Bob room";
     await expect(page.getByRole("button", { name: `Open ${expectedRoom}`, exact: true })).toBeVisible();
     const saved = await page.evaluate(async () => {

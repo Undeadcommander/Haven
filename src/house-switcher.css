@@ -1,0 +1,243 @@
+.house-switcher {
+  position: relative;
+  flex: 0 1 280px;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--ink, #293e35);
+  font-size: 12px;
+}
+
+.house-switcher [hidden] {
+  display: none !important;
+}
+
+.house-switcher__controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.house-switcher button,
+.house-switcher input {
+  box-sizing: border-box;
+  font: inherit;
+  color: inherit;
+}
+
+.house-switcher__trigger,
+.house-switcher__add,
+.house-switcher__option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 9px 10px;
+  border: 1px solid var(--line, #dce3d7);
+  border-radius: 7px;
+  background: var(--surface, #fff);
+  cursor: pointer;
+  text-align: start;
+}
+
+.house-switcher__trigger {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 220px;
+}
+
+.house-switcher__add {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.house-switcher__add > span {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.house-switcher__name {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.house-switcher__icon {
+  flex: 0 0 17px;
+  width: 17px;
+  height: 17px;
+}
+
+.house-switcher__chevron {
+  flex: 0 0 auto;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.house-switcher__trigger[aria-expanded="true"] .house-switcher__chevron {
+  transform: rotate(180deg);
+}
+
+.house-switcher__panel {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: min(340px, calc(100vw - 24px));
+  max-height: min(440px, calc(100dvh - 24px));
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--line, #dce3d7);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  box-shadow: 0 12px 32px #0003;
+}
+
+.house-switcher__search-label {
+  flex-shrink: 0;
+  margin-bottom: 7px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.house-switcher input.house-switcher__search {
+  flex-shrink: 0;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line, #dce3d7);
+  border-radius: 6px;
+  background: var(--input, #fbfcf9);
+  font-size: 16px;
+}
+
+.house-switcher__search::placeholder {
+  color: var(--muted-ink, #687b65);
+  opacity: 1;
+}
+
+.house-switcher__status {
+  flex-shrink: 0;
+  margin: 9px 0;
+  color: var(--muted-ink, #687b65);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.house-switcher__list {
+  min-height: 0;
+  max-height: 280px;
+  margin: 0;
+  padding: 3px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  scrollbar-gutter: stable;
+}
+
+.house-switcher__list > li + li {
+  margin-top: 3px;
+}
+
+.house-switcher__option {
+  width: 100%;
+  min-width: 0;
+  border-color: transparent;
+  font-size: 13px;
+}
+
+.house-switcher__option[aria-current="true"] {
+  background: var(--surface-soft, #f0f3ec);
+  font-weight: 600;
+}
+
+.house-switcher__check {
+  flex: 0 0 auto;
+  visibility: hidden;
+}
+
+.house-switcher__option[aria-current="true"] .house-switcher__check {
+  visibility: visible;
+}
+
+.house-switcher button:hover {
+  background: var(--hover, #e3e9dd);
+}
+
+.house-switcher button:focus-visible,
+.house-switcher input:focus-visible {
+  outline: 2px solid var(--accent, #294d3f);
+  outline-offset: 2px;
+}
+
+@media (max-width: 760px) {
+  header:has(> .house-switcher) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    height: auto;
+    min-height: 72px;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  header > .house-switcher {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  header:has(> .house-switcher) > .search-wrap {
+    width: 100%;
+    min-width: 0;
+    gap: 7px;
+  }
+
+  header:has(> .house-switcher) > .search-wrap > kbd {
+    display: none;
+  }
+
+  header:has(> .house-switcher) > .header-right {
+    min-width: 0;
+    gap: 6px;
+  }
+
+  header:has(> .house-switcher) .theme-picker {
+    width: 104px;
+    padding-inline: 8px;
+    appearance: auto;
+  }
+
+  header:has(> .house-switcher) .theme-control > .icon {
+    display: none;
+  }
+
+  .house-switcher {
+    flex-basis: 190px;
+    font-size: 11px;
+  }
+
+  .house-switcher__controls {
+    gap: 4px;
+  }
+
+  .house-switcher__trigger {
+    max-width: none;
+  }
+
+  .house-switcher__trigger,
+  .house-switcher__add {
+    gap: 5px;
+    padding-inline: 7px;
+  }
+
+  .house-switcher__icon {
+    display: none;
+  }
+}

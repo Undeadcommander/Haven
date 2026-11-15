@@ -1,6 +1,7 @@
 import { validLocationImage, validItemImage } from "./location-images.js";
 import { validScanData } from "./scan-data.js";
 import { createLocationTree } from "./location-tree.js";
+import { validHouses } from "./houses.js";
 export const inventoryColors = ["sage", "sand", "blue", "rose", "mint", "lavender", "terracotta"];
 
 export function initialState() {
@@ -66,6 +67,7 @@ export function validState(s) {
   // Cycles and orphan chains cannot be reached from any root.
   if (createLocationTree(s.locations).order.length !== s.locations.length) return false;
   return (
+    validHouses(s) &&
     validScanData(s) &&
     new Set(s.items.map((i) => i.id)).size === s.items.length &&
     s.items.every(
@@ -90,16 +92,19 @@ export function createIndex(state) {
   const paths = new Map();
   function path(id) {
     if (paths.has(id)) return paths.get(id);
-    const parts = [];
-    let cur = byId.get(id);
-    while (cur && !paths.has(cur.id)) {
-      parts.push(cur.name);
-      cur = byId.get(cur.parentId);
+    const missing = [];
+    let ancestor = byId.get(id);
+    while (ancestor && !paths.has(ancestor.id)) {
+      missing.push(ancestor);
+      ancestor = byId.get(ancestor.parentId);
     }
-    const prefix = cur ? paths.get(cur.id) : "";
-    const suffix = parts.reverse().join(" / ");
-    const value = cur ? `${prefix} / ${suffix}` : suffix;
-    paths.set(id, value);
+    let value = ancestor ? paths.get(ancestor.id) : "";
+    for (let position = missing.length - 1; position >= 0; position--) {
+      const location = missing[position];
+      value = location.parentId === null ? location.name : `${value} / ${location.name}`;
+      paths.set(location.id, value);
+    }
+    if (!missing.length && !ancestor) paths.set(id, value);
     return value;
   }
   const search = state.items.map((i) => ({

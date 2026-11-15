@@ -1,5 +1,7 @@
 ﻿# RAM management review
 
+**Latest runtime measurements:** see [TEST_AUDIT_REPORT.md](TEST_AUDIT_REPORT.md) for the 2026-11-15 isolated app RAM and repeated-lifecycle audit. The figures and unmeasured-runtime statements below describe an earlier review.
+
 **Scope:** initial source review and background-process snapshot, followed by an authorized code cleanup and regression checks. The process numbers below belong to the initial audit; live application RAM and savings have not been measured.
 
 ## Current RAM measurement

@@ -144,7 +144,7 @@ export function setupAccount(api) {
         api.replace(guest());
       } catch (error) {
         problem = error.message;
-        api.replace(initialState());
+        api.replace(initialState(), { storageIssue: "Saved data could not be loaded. Editing is paused to protect it. Export the raw saved data, reload to retry, or restore a backup." });
       }
     }
     if (epoch !== authEpoch) return;
@@ -252,7 +252,7 @@ export function setupAccount(api) {
           committed = true;
           // Publish the saved view before asynchronous lease cleanup. Session
           // changes or newer edits during cleanup must keep their own view.
-          api.replace(merged.inventory);
+          api.replace(merged.inventory, { houseId: merged.houseId });
           if (staged.commit) await staged.commit().catch(() => {});
           if (user?.uid !== uid || authEpoch !== epoch) return;
           problem = "";
@@ -387,13 +387,15 @@ export function setupAccount(api) {
     },
     initialize,
     cleanupAssets: scheduleAssetCleanup,
-    save(inventory) {
+    save(inventory, { replaceUnreadable = false } = {}) {
       if (sync.status === "deleting")
         throw Error("Account deletion is unfinished. Open Account → Delete account to finish.");
       if (!ready)
         throw Error(
           "Your account is still loading. Please try again in a moment.",
         );
+      if (!user && api.storageIssue?.() && !replaceUnreadable)
+        throw Error("Editing is paused to protect unreadable saved data. Export raw recovery data, reload, or explicitly restore a backup first.");
       if (user) sync.saveLocal(inventory);
       else localStorage.setItem("haven-inventory", JSON.stringify(inventory));
       scheduleAssetCleanup();

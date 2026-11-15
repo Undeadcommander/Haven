@@ -23,6 +23,18 @@ npm run test:e2e
 
 Browser tests start the dev server automatically (or reuse a running local server). Locally they use `/usr/bin/chromium`; CI installs Playwright Chromium. Set `CHROMIUM_PATH` to another Chromium executable if needed. Tests cover nested containers, search, reload persistence, editing, deletion, backup restore, and mobile overflow.
 
+The `audit:baseline`, `audit:bugs`, `audit:performance`, `audit:ram`, and `audit:leaks` npm scripts provide repeatable regression and resource checks. Browser audit scripts start isolated, headless sessions, disable Firebase, block external requests, and serialize measurements with a lock. Set `CHROMIUM_PATH` for your browser; the resource scripts default to Windows Edge. The RAM audit uses Windows process counters. Results and heap snapshots go to ignored `test-results/audit/`; timing and memory figures are environment-specific, not universal pass thresholds. See `TEST_AUDIT_REPORT.md` for the measured audit and remaining limitations.
+
+## Multiple houses
+
+Use the house picker in the header to switch houses or choose **Add house**. Give the new house a name, then add its rooms. The picker includes search for quickly finding a house in a long list and works on desktop and mobile. There is no fixed house-count limit; browser storage and account sync size limits still apply.
+
+Existing inventory stays in **My home**. Each house has its own rooms, nested containers, items, search results, and scan markers. The last selected house is remembered on this device separately for guest mode and each account. Switching houses does not change inventory or trigger a cloud save.
+
+Backups include **all houses** and their locally available scan files. Restoring replaces the entire collection after confirmation; older single-home backups are still supported. Account sync includes every house, and copying device inventory into an account adds separate houses without mixing their contents into existing houses.
+
+If guest inventory cannot be loaded, ordinary edits are blocked rather than replacing the saved value with sample data. Export saves the original raw metadata as a `haven-raw-recovery-*.json` file; it is not a full scan backup and may need repair before restoring. Reload retries loading, and an explicit, confirmed restore can replace the unreadable value. Browser history remembers house context, and existing room links select the house that owns the room.
+
 ## Storage and performance
 
 Inventory and marker metadata are stored in this browser's localStorage; binary scans are stored in IndexedDB, on this site's origin. Optional Google accounts sync inventory and scan markers through Firestore when the project owner enables the backend. Guest mode stays local. Export JSON backups from the sidebar (or footer on mobile); restoring replaces the current inventory after confirmation. Clearing browser data removes the inventory. Storage failures are reported and changes are not silently accepted.

@@ -546,9 +546,10 @@ export async function openScanViewer(locationId, api) {
         throw Error(
           "Scan metadata could not be saved. The previous scan is unchanged.",
         );
-      await commitAssets([assetId], openScope).catch(() => {});
       showObject(object, entry);
       object = null;
+      await commitAssets([assetId], openScope).catch(() => {});
+      if (!ensureCurrentScan(entry)) return;
       if (previous) deleteUnusedAsset(previous.assetId);
       tell(`Loaded ${name}. Right-click a surface to place a marker.`);
     } catch (error) {

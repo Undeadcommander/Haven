@@ -5,6 +5,9 @@ import "./themes.css";
 import "./account.css";
 import { setupInventoryDrag } from "./inventory-drag.js";
 import { setupAccount } from "./account.js";
+import { houseSwitcherMarkup, bindHouseSwitcher } from "./house-switcher.js";
+import "./house-switcher.css";
+import { addHouse, withHouses, inventoryForHouse, replaceHouseInventory, MAX_HOUSE_NAME_LENGTH } from "./houses.js";
 import { pruneScanLinks, transferItem, transferContainer } from "./scan-data.js";
 import {
   createBackupBlob,
@@ -41,6 +44,7 @@ const esc = (s) =>
         c
       ],
   );
+const recoveryMessage = "Saved data could not be loaded. Editing is paused to protect it. Export the raw saved data, reload to retry, or restore a backup.";
 let state = initialState(),
   storageIssue = "";
 try {
@@ -51,9 +55,17 @@ try {
     state = parsed;
   }
 } catch {
-  storageIssue =
-    "Saved data could not be loaded. Export your current data before closing this page.";
+  storageIssue = recoveryMessage;
 }
+let inventory = withHouses(state);
+const housePreferenceKey = () => `haven-active-house:${getAssetScope() ? `account:${getAssetScope()}` : "guest"}`;
+function preferredHouse(houses) {
+  let saved;
+  try { saved = localStorage.getItem(housePreferenceKey()); } catch {}
+  return houses.some((house) => house.id === saved) ? saved : houses[0].id;
+}
+let activeHouseId = preferredHouse(inventory.houses);
+state = inventoryForHouse(inventory, activeHouseId);
 let index = createIndex(state),
   current = null,
   query = "",
@@ -65,24 +77,35 @@ const root = document.querySelector("#app");
 const inventoryChanges = new EventTarget();
 let inventoryEpoch = 0;
 let cancelDrag = () => {};
+let unbindHouseSwitcher = () => {};
 const account = setupAccount({
-  replace(inventory) {
+  storageIssue: () => storageIssue,
+  replace(next, options = {}) {
     inventoryEpoch++;
-    state = inventory;
+    storageIssue = options.storageIssue || "";
+    inventory = withHouses(next);
+    activeHouseId = inventory.houses.some((house) => house.id === options.houseId)
+      ? options.houseId : preferredHouse(inventory.houses);
+    if (options.houseId) rememberHouse();
+    state = inventoryForHouse(inventory, activeHouseId);
     index = createIndex(state);
     current = null;
     query = "";
     view = "rooms";
     highlight = null;
     itemPage = 0;
+    history.replaceState(historyEntry(), "", "#");
     render();
     inventoryChanges.dispatchEvent(new Event("replace"));
   },
 });
 function save(next) {
-  next = pruneScanLinks(next);
+  return saveInventory(replaceHouseInventory(inventory, activeHouseId, pruneScanLinks(next)));
+}
+function saveInventory(next, options = {}) {
+  next = pruneScanLinks(withHouses(next));
   try {
-    account.save(next);
+    account.save(next, options);
   } catch (error) {
     toast(
       error.message ||
@@ -92,9 +115,66 @@ function save(next) {
     return false;
   }
   inventoryEpoch++;
-  state = next;
+  inventory = next;
+  if (!inventory.houses.some((house) => house.id === activeHouseId))
+    activeHouseId = preferredHouse(inventory.houses);
+  state = inventoryForHouse(inventory, activeHouseId);
   index = createIndex(state);
   return true;
+}
+function rememberHouse() {
+  try {
+    localStorage.setItem(housePreferenceKey(), activeHouseId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function historyEntry() {
+  return { houseId: activeHouseId, scope: getAssetScope() };
+}
+function activateHouse(id) {
+  if (id === activeHouseId || !inventory.houses.some((house) => house.id === id)) return;
+  inventoryEpoch++;
+  activeHouseId = id;
+  const remembered = rememberHouse();
+  state = inventoryForHouse(inventory, activeHouseId);
+  index = createIndex(state);
+  document.querySelector("#editor")?.close();
+  document.querySelector(".scan-dialog")?.close();
+  inventoryChanges.dispatchEvent(new Event("replace"));
+  return remembered;
+}
+function selectHouse(id) {
+  const remembered = activateHouse(id);
+  if (remembered === undefined) return;
+  navigate();
+  root.querySelector("[data-house-toggle]")?.focus();
+  toast(remembered ? `Switched to ${inventory.houses.find((house) => house.id === id).name}`
+    : "House switched for this session. Browser storage is unavailable.");
+  return remembered;
+}
+function createHouse() {
+  modal(
+    "Add a house",
+    "Keep each house’s rooms, containers, items, and scans in its own space. Switch houses anytime from the header.",
+    `<label>House name<input name="name" required maxlength="${MAX_HOUSE_NAME_LENGTH}" placeholder="e.g. Lake house" autocomplete="off"></label><p class="warning" data-settings-error role="alert" hidden></p>`,
+    (data, dialog) => {
+      try {
+        const id = crypto.randomUUID();
+        const next = addHouse(inventory, data.get("name"), id);
+        if (!saveInventory(next)) {
+          showSettingsError(dialog, "Could not save this house. Please try again.");
+          return;
+        }
+        dialog.close();
+        if (selectHouse(id)) toast("Your new house is ready. Add a room to get started.");
+      } catch (error) {
+        showSettingsError(dialog, error.message);
+      }
+    },
+    "Add house",
+  );
 }
 function navigate(id = null, itemId = null) {
   current = id;
@@ -103,7 +183,7 @@ function navigate(id = null, itemId = null) {
   view = "rooms";
   const itemOffset = itemId ? (index.items.get(id) || []).findIndex((item) => item.id === itemId) : 0;
   itemPage = Math.floor(Math.max(0, itemOffset) / ITEMS_PER_PAGE);
-  history.pushState(null, "", id ? `#room/${encodeURIComponent(id)}` : "#");
+  history.pushState(historyEntry(), "", id ? `#room/${encodeURIComponent(id)}` : "#");
   render();
   if (itemId)
     requestAnimationFrame(() =>
@@ -130,6 +210,7 @@ function card(l) {
 }
 function render() {
   cancelDrag();
+  unbindHouseSwitcher();
   if (current && !index.byId.has(current)) current = null;
   const room = index.byId.get(current),
     rooms = index.children.get(null) || [],
@@ -137,6 +218,8 @@ function render() {
     children = index.children.get(current) || [],
     own = index.items.get(current) || [];
   root.innerHTML = `<aside class="sidebar"><a href="#" class="brand" aria-label="Haven home">${icon("home")}<span>haven<span class="brand-dot">.</span></span></a><div class="workspace-label">YOUR PERSONAL SPACE</div><button class="nav-link ${!current && view === "rooms" ? "active" : ""}" data-home>${icon("home")} My home <span>${rooms.length}</span></button><button class="nav-link ${view === "containers" ? "active" : ""}" data-all-containers>${icon("folder")} All containers <span>${containers.length}</span></button><button class="nav-link ${view === "items" ? "active" : ""}" data-all>${icon("box")} All items <span>${state.items.length}</span></button><div class="sidebar-section">MY ROOMS <button class="icon-button" data-add-root aria-label="Add room">${icon("plus")}</button></div><nav class="room-nav">${rooms.map((l) => `<button class="nav-link ${current === l.id ? "selected" : ""}" data-open="${esc(l.id)}" data-drop-location="${esc(l.id)}"><span class="room-dot ${l.color}"></span>${esc(l.name)}</button>`).join("")}</nav><div class="sidebar-bottom"><div class="little-house">${icon("leaf")}</div><h4>A little less looking.<br>A little more living.</h4><p>A home for everything you own.</p><div class="local-status"><span></span><span data-save-status>Saved on this device</span></div><button class="backup" data-export>${icon("download")} Export a backup</button><button class="backup" data-import>${icon("folder")} Restore a backup</button></div></aside><div class="main-shell"><header><div class="search-wrap">${icon("search")}<input id="search" type="search" placeholder="Find anything in your home…" value="${esc(query)}" aria-label="Search items and rooms" autocomplete="off"><kbd>/</kbd><div id="search-results" class="search-results" hidden></div></div><div class="header-right"><div class="theme-control">${icon("palette")}<select class="theme-picker" data-theme-picker aria-label="Color theme" title="Color theme"><option value="light">Light</option><option value="dark">Dark</option><option value="oled">OLED black</option><option value="grey">Dark grey</option><option value="rose">Rose</option><option value="aqua">Aqua</option><option value="midnight">Midnight</option><option value="plum">Plum</option><option value="linen">Linen</option><option value="lavender">Lavender</option></select>${icon("chevron", "theme-chevron")}</div><button class="account-button" data-account title="Sign up or sign in with Google">Sign in</button><button class="avatar" type="button" data-account-avatar aria-label="Account" title="Manage your account" hidden>H</button></div></header><div data-account-status hidden></div><main>${storageIssue ? `<div class="warning">${esc(storageIssue)}</div>` : ""}<div class="breadcrumb"><button data-home>My home</button>${room ? breadcrumb(room) : `<span>/</span><span>${view === "containers" ? "All containers" : view === "items" ? "All items" : "Overview"}</span>`}</div><div class="page-heading"><div><div class="eyebrow">${room ? "A PLACE FOR THE DETAILS" : "A PLACE FOR EVERYTHING"}</div><h1>${room ? esc(room.name) : view === "containers" ? "All your containers." : view === "items" ? "All your things." : "Home, organized."}</h1><p>${room ? esc(room.description || "Give every little thing a place to belong.") : view === "containers" ? "Every drawer, shelf, and box, all in one place." : view === "items" ? "Everything you’ve saved, all in one place." : "Less searching. More living. Know exactly where everything belongs."}</p></div><div class="heading-actions">${room ? `${room.parentId !== null ? `<button class="secondary" data-move-container>${icon("move")} Move container</button>` : ""}<button class="icon-button border" data-edit-location aria-label="Edit location">${icon("edit")}</button><button class="icon-button border" data-delete-location aria-label="Delete location">${icon("trash")}</button><button class="primary" data-add-item>${icon("plus")} Add item</button>` : `<button class="primary" data-add-root>${icon("plus")} Add room</button>`}</div></div>${!room && view === "rooms" ? `<div class="stats"><div>${icon("home")}<span><strong>${rooms.length}</strong> Room${rooms.length === 1 ? "" : "s"}</span></div><div>${icon("box")}<span><strong>${state.items.length}</strong> Items tucked away</span></div><div>${icon("folder")}<span><strong>${state.locations.length - rooms.length}</strong> Containers</span></div><div class="stats-note">${icon("check")} A clearer space, a clearer mind.</div></div>` : ""}${room ? scanSection(room) : ""}${view === "containers" ? containerSection(containers) : view === "items" ? itemSection(state.items, true) : `<section><div class="section-heading"><h2>${room ? "Containers & areas" : "Your rooms"} <span>${children.length}</span></h2><span class="section-hint">${room ? "Every space has a place" : "Make yourself at home"}</span></div><div class="room-grid">${children.map(card).join("")}<button class="add-card" data-add-location><span class="add-circle">${icon("plus")}</span><h3>${room ? "Add a container" : "Add a room"}</h3><p>${room ? "A drawer, a shelf, a box…" : "A new space for your things"}</p></button></div></section>${room ? itemSection(own, false) : ""}`}</main><div class="mobile-backup"><button class="backup" data-export>Export a backup</button><button class="backup" data-import>Restore a backup</button></div><footer><span>Less clutter. More calm.</span><span>Made for the things that matter.</span></footer></div><div id="toast" role="status"></div><dialog id="editor"></dialog>`;
+  root.querySelector("header").insertAdjacentHTML("afterbegin", houseSwitcherMarkup({ houses: inventory.houses, activeHouseId }));
+  root.querySelector(".breadcrumb [data-home]").textContent = inventory.houses.find((house) => house.id === activeHouseId).name;
   bind();
 }
 function breadcrumb(room) {
@@ -165,6 +248,9 @@ function itemSection(items, all) {
   return `<section class="items-section"><div class="section-heading"><h2>${all ? "Your inventory" : "Items in this space"} <span>${items.length}</span></h2>${!all ? `<button class="text-button" data-add-item>${icon("plus")} Add item</button>` : ""}</div>${items.length ? `<div class="item-list">${visible.map((i) => `<article id="item-${esc(i.id)}" class="item-row ${i.color || "sage"} ${highlight === i.id ? "highlight" : ""}" draggable="true" data-drag-kind="item" data-drag-id="${esc(i.id)}"><div class="item-symbol">${itemImage(i.image) || icon("box")}</div><div class="item-info"><h3>${esc(i.name)}</h3><p>${esc(i.notes || "No extra details")}${all ? `<button class="item-path" data-find="${esc(i.id)}">${esc(index.path(i.locationId))} ${icon("arrow")}</button>` : ""}</p></div><button class="icon-button" data-move-item="${esc(i.id)}" aria-label="Move ${esc(i.name)}">${icon("move")}</button><button class="icon-button" data-edit-item="${esc(i.id)}" aria-label="Settings for ${esc(i.name)}" title="Edit or move ${esc(i.name)}">${icon("gear")}</button><button class="icon-button" data-delete-item="${esc(i.id)}" aria-label="Delete ${esc(i.name)}">${icon("trash")}</button></article>`).join("")}</div>${pagination}` : `<div class="empty-items">${icon("box")}<h3>A place for your first find.</h3><p>${all ? "Open a room to add your first item." : "Add an item and a few details so it’s easy to find later."}</p>${!all ? '<button class="secondary" data-add-item>Add your first item</button>' : ""}</div>`}</section>`;
 }
 function bind() {
+  unbindHouseSwitcher = bindHouseSwitcher({
+    root, houses: inventory.houses, activeHouseId, onSelect: selectHouse, onAdd: createHouse,
+  });
   account.bind();
   root.querySelectorAll("[data-item-page]").forEach((button) => {
     button.onclick = () => {
@@ -213,7 +299,7 @@ function bind() {
     view = "containers";
     query = "";
     itemPage = 0;
-    history.pushState(null, "", "#containers");
+    history.pushState(historyEntry(), "", "#containers");
     render();
   };
   root.querySelector("[data-all]").onclick = () => {
@@ -221,7 +307,7 @@ function bind() {
     view = "items";
     query = "";
     itemPage = 0;
-    history.pushState(null, "", "#items");
+    history.pushState(historyEntry(), "", "#items");
     render();
   };
   root
@@ -544,15 +630,22 @@ function toast(message, error = false) {
 }
 async function exportData() {
   try {
-    toast("Preparing a full backup, including room scans…");
-    const backup = await createBackupBlob(state);
+    const recovering = !!storageIssue && !account.uid;
+    toast(recovering ? "Preparing raw recovery metadata…" : "Preparing a full backup, including room scans…");
+    let backup;
+    if (recovering) {
+      const raw = localStorage.getItem("haven-inventory");
+      if (raw === null) throw Error("Saved data is unavailable. Reload to retry; no data has been replaced.");
+      backup = new Blob([raw], { type: "application/json" });
+    } else backup = await createBackupBlob(inventory);
     const url = URL.createObjectURL(backup);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `haven-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `haven-${recovering ? "raw-recovery" : "backup"}-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    toast("Backup ready. Keep it somewhere safe.");
+    toast(recovering ? "Raw recovery metadata exported unchanged. Scan files remain on this device."
+      : "Backup ready. Keep it somewhere safe.");
   } catch (error) {
     toast(error.message || "Could not export the backup.", true);
   }
@@ -586,7 +679,7 @@ function importData() {
         );
       modal(
         "Restore this backup?",
-        `Replace your inventory with ${data.locations.length} spaces, ${data.items.length} items, and ${data.scans?.length || 0} scans? Export your current inventory first to keep a copy.`,
+        `Replace all your houses with ${data.houses?.length || 1} house(s), ${data.locations.length} spaces, ${data.items.length} items, and ${data.scans?.length || 0} scans? Export a backup first to keep a copy of every house.`,
         "",
         async (_, dialog) => {
           const form = dialog.querySelector("form");
@@ -606,15 +699,19 @@ function importData() {
               await staged.rollback();
               throw Error(staleMessage);
             }
-            if (!save(staged.inventory)) {
+            if (!saveInventory(staged.inventory, { replaceUnreadable: true })) {
               await staged.rollback();
               throw Error("Could not save the restored inventory.");
             }
+            const restoredVersion = inventoryEpoch;
             if (staged.commit) await staged.commit().catch(() => {});
+            if (account.authEpoch !== owner || getAssetScope() !== scope ||
+                inventoryEpoch !== restoredVersion || !ownsDialog()) return;
             storageIssue = "";
             dialog.close();
             navigate();
-            toast("Your inventory and scans have been restored.");
+            inventoryChanges.dispatchEvent(new Event("replace"));
+            toast("All houses, inventory, and scans have been restored.");
           } catch (error) {
             toast(error.message || "Could not restore the backup.", true);
             if (ownsDialog())
@@ -642,9 +739,10 @@ async function showRoomScan() {
   if (scanOpening) return;
   scanOpening = true;
   const id = current;
+  const houseId = activeHouseId, owner = account.authEpoch, version = inventoryEpoch;
   try {
     const { openScanViewer } = await import("./scan-viewer.js");
-    if (current !== id) return;
+    if (current !== id || activeHouseId !== houseId || account.authEpoch !== owner || inventoryEpoch !== version) return;
     await openScanViewer(id, {
       getState: () => state,
       getIndex: () => index,
@@ -736,7 +834,14 @@ function moveItem(id) {
 }
 function route() {
   itemPage = 0;
-  const hash = location.hash.slice(1);
+  query = "";
+  highlight = null;
+  const entry = history.state;
+  let unresolvedLegacyRoom = null;
+  const foreignHistory = entry?.houseId && entry.scope !== getAssetScope();
+  const hash = foreignHistory ? "" : location.hash.slice(1);
+  if (!foreignHistory && inventory.houses.some((house) => house.id === entry?.houseId))
+    activateHouse(entry.houseId);
   if (hash === "items" || hash === "containers") {
     view = hash;
     current = null;
@@ -749,7 +854,22 @@ function route() {
     } catch {
       current = null;
     }
+    if (current && !index.byId.has(current)) {
+      const locations = new Map(inventory.locations.map((location) => [location.id, location]));
+      let location = locations.get(current);
+      while (location && location.parentId !== null) location = locations.get(location.parentId);
+      if (location) activateHouse(location.houseId);
+      if (!index.byId.has(current)) {
+        if (!entry?.houseId || entry.pendingRoom === current) unresolvedLegacyRoom = current;
+        current = null;
+      }
+    }
   }
+  const nextEntry = historyEntry();
+  if (unresolvedLegacyRoom) nextEntry.pendingRoom = unresolvedLegacyRoom;
+  history.replaceState(nextEntry, "", unresolvedLegacyRoom ? `#room/${encodeURIComponent(unresolvedLegacyRoom)}`
+    : current ? `#room/${encodeURIComponent(current)}`
+    : view === "rooms" ? "#" : `#${view}`);
   render();
 }
 window.addEventListener("hashchange", route);
@@ -774,8 +894,11 @@ window.addEventListener("storage", (e) => {
   try {
     account.externalChange(e.key);
   } catch {
+    storageIssue = recoveryMessage;
+    inventoryEpoch++;
+    render();
     toast(
-      "Updated inventory could not be loaded. Reload or restore a backup.",
+      recoveryMessage,
       true,
     );
   }

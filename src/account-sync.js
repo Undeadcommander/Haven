@@ -1,4 +1,5 @@
 import { initialState, validState } from "./store.js";
+import { withHouses, MAX_HOUSE_NAME_LENGTH } from "./houses.js";
 import { deletionKey, isDeletingRecord } from "./delete-account-data.js";
 export const accountKey = (uid) => `haven-account:${uid}`;
 const scanAssets = (inventory) => [...new Set((inventory?.scans || []).map((scan) => scan.assetId))];
@@ -264,6 +265,20 @@ export function mergeGuestInventory(
   guest,
   id = () => crypto.randomUUID(),
 ) {
+  account = withHouses(account);
+  guest = withHouses(guest);
+  const houseIds = new Map(guest.houses.map((house) => [house.id, id()]));
+  const names = new Set(account.houses.map((house) => house.name.toLowerCase()));
+  const houses = guest.houses.map((house) => {
+    let name = house.name, copy = 1;
+    while (names.has(name.toLowerCase())) {
+      const suffix = ` (device${copy === 1 ? "" : ` ${copy}`})`;
+      name = house.name.slice(0, MAX_HOUSE_NAME_LENGTH - suffix.length) + suffix;
+      copy++;
+    }
+    names.add(name.toLowerCase());
+    return { ...house, id: houseIds.get(house.id), name };
+  });
   const locations = new Map(guest.locations.map((l) => [l.id, id()])),
     items = new Map(guest.items.map((i) => [i.id, id()])),
     scans = new Map((guest.scans || []).map((s) => [s.id, id()])),
@@ -271,11 +286,13 @@ export function mergeGuestInventory(
   return {
     inventory: {
       ...account,
+      houses: [...account.houses, ...houses],
       locations: [
         ...account.locations,
         ...guest.locations.map((l) => ({
           ...l,
           id: locations.get(l.id),
+          ...(l.parentId === null ? { houseId: houseIds.get(l.houseId) } : {}),
           parentId: l.parentId === null ? null : locations.get(l.parentId),
         })),
       ],
@@ -307,5 +324,6 @@ export function mergeGuestInventory(
       ],
     },
     assets,
+    houseId: houses[0].id,
   };
 }

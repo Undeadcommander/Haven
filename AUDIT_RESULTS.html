@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inventory audit measurements</title>
+<style>
+  :root { font-family: var(--font-sans, system-ui); color: var(--foreground); }
+  body { margin: 0; }
+  main { display: grid; gap: 14px; }
+  figure { margin: 0; padding: 16px; border-radius: var(--radius, 12px); background: var(--card); border: 1px solid var(--border); }
+  h2 { font-size: 16px; margin: 0 0 6px; font-weight: 650; }
+  p, figcaption { color: var(--muted-foreground, var(--foreground)); font-size: 12px; line-height: 1.5; margin: 0; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 10px 0 12px; font-size: 12px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { height: 8px; width: 8px; border-radius: 50%; background: var(--chart-1); }
+  .before { background: var(--chart-2); }
+  .third { background: var(--chart-3); }
+  .deep-chart { height: 200px; display: grid; align-content: start; gap: 14px; }
+  .group { display: grid; grid-template-columns: 65px minmax(0, 1fr); gap: 10px; align-items: center; font-size: 12px; }
+  .pair { display: grid; gap: 6px; }
+  .barrow { display: grid; grid-template-columns: minmax(0, 1fr) 47px; gap: 9px; align-items: center; }
+  .track { height: 10px; border-radius: 3px; background: var(--secondary); overflow: hidden; }
+  .bar { width: var(--value); height: 100%; background: var(--chart-1); min-width: 2px; }
+  .bar.before { background: var(--chart-2); }
+  .value { font-variant-numeric: tabular-nums; text-align: right; font-size: 12px; }
+  .scale { display: flex; justify-content: space-between; color: var(--muted-foreground, var(--foreground)); font-size: 11px; margin: 0 56px 0 75px; }
+  .memory-chart { height: 192px; display: grid; align-content: center; gap: 12px; margin-top: 7px; }
+  .memory-row { display: grid; grid-template-columns: 95px minmax(0, 1fr) 52px; gap: 9px; align-items: center; font-size: 12px; }
+  .memory-scale { margin: 10px 61px 0 104px; }
+  .memory-chart .bar { background: var(--chart-3); }
+  .cycle-chart { height: 175px; display: flex; gap: 7px; margin-top: 12px; }
+  .yaxis { width: 22px; height: 150px; display: flex; flex-direction: column; justify-content: space-between; font-size: 11px; color: var(--muted-foreground, var(--foreground)); }
+  .plot { min-width: 0; flex: 1; }
+  svg { display: block; height: 150px; width: 100%; overflow: visible; }
+  .grid { stroke: var(--border); stroke-width: 1; }
+  .line { fill: none; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+  .xaxis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted-foreground, var(--foreground)); margin-top: 5px; }
+  @media (max-width: 440px) { figure { padding: 12px; } .memory-row { grid-template-columns: 83px minmax(0, 1fr) 48px; gap: 6px; } .memory-scale { margin-left: 89px; margin-right: 54px; } }
+</style>
+</head>
+<body>
+<main>
+  <figure aria-label="Deepest-first index medians before and after caching: depth 500, 5.1 to 1.8 milliseconds; depth 1000, 16.7 to 6.0; depth 2000, 65.0 to 24.3.">
+    <h2>Deep indexing: repeated ancestor walks removed</h2>
+    <p>Adversarial in-memory chains · median milliseconds · lower is better</p>
+    <div class="legend"><span><i class="dot before"></i>Before</span><span><i class="dot"></i>After caching</span></div>
+    <div class="deep-chart">
+      <div class="group"><span>500 levels</span><div class="pair"><div class="barrow"><div class="track"><div class="bar before" style="--value:6.8%"></div></div><span class="value">5.1</span></div><div class="barrow"><div class="track"><div class="bar" style="--value:2.4%"></div></div><span class="value">1.8</span></div></div></div>
+      <div class="group"><span>1,000 levels</span><div class="pair"><div class="barrow"><div class="track"><div class="bar before" style="--value:22.27%"></div></div><span class="value">16.7</span></div><div class="barrow"><div class="track"><div class="bar" style="--value:8%"></div></div><span class="value">6.0</span></div></div></div>
+      <div class="group"><span>2,000 levels</span><div class="pair"><div class="barrow"><div class="track"><div class="bar before" style="--value:86.67%"></div></div><span class="value">65.0</span></div><div class="barrow"><div class="track"><div class="bar" style="--value:32.4%"></div></div><span class="value">24.3</span></div></div></div>
+      <div class="scale"><span>0</span><span>75 ms</span></div>
+    </div>
+    <figcaption>Six samples after warmup, one desktop environment. Full path/search text still grows with depth; this is not an across-the-board app speed claim.</figcaption>
+  </figure>
+  <figure aria-label="Dedicated browser private bytes in MiB across sequential phases: blank 210.36; initial app 238.19; populated 271.97; viewer open 379.93; viewer closed 376.86; restore 440.24.">
+    <h2>RAM: browser footprint, not just JavaScript heap</h2>
+    <p>Dedicated headless Edge process group · private committed MiB · sequential phases</p>
+    <div class="scale memory-scale"><span>0</span><span>500 MiB</span></div>
+    <div class="memory-chart">
+      <div class="memory-row"><span>Blank browser</span><div class="track"><div class="bar" style="--value:42.07%"></div></div><span class="value">210.36</span></div>
+      <div class="memory-row"><span>Initial app</span><div class="track"><div class="bar" style="--value:47.64%"></div></div><span class="value">238.19</span></div>
+      <div class="memory-row"><span>5,000 items</span><div class="track"><div class="bar" style="--value:54.39%"></div></div><span class="value">271.97</span></div>
+      <div class="memory-row"><span>Viewer open</span><div class="track"><div class="bar" style="--value:75.99%"></div></div><span class="value">379.93</span></div>
+      <div class="memory-row"><span>Viewer closed</span><div class="track"><div class="bar" style="--value:75.37%"></div></div><span class="value">376.86</span></div>
+      <div class="memory-row"><span>Backup restore</span><div class="track"><div class="bar" style="--value:88.05%"></div></div><span class="value">440.24</span></div>
+    </div>
+    <figcaption>Post-GC page JS heap was 2.52 MiB initially and 7.14 MiB after restore. Private bytes are not resident physical RAM; browser/GPU allocation history prevents causal phase comparisons.</figcaption>
+  </figure>
+  <figure aria-label="Post-GC heap in MiB from warmup through three batches: houses 3.03, 3.14, 3.16, 3.17; dialogs 3.33, 3.40, 3.46, 3.49; scans 5.92, 6.18, 6.39, 6.43.">
+    <h2>Lifecycle checks: stable DOM and listener counts</h2>
+    <p>Page JS heap after forced GC, MiB · compare within each workload</p>
+    <div class="cycle-chart"><div class="yaxis"><span>8</span><span>4</span><span>0</span></div><div class="plot">
+      <svg viewBox="0 0 600 150" preserveAspectRatio="none" aria-hidden="true">
+        <path class="grid" d="M0 5H600 M0 75H600 M0 145H600"/>
+        <path class="line" stroke="var(--chart-1)" d="M5 92L202 90.1L399 89.7L595 89.5"/>
+        <path class="line" stroke="var(--chart-2)" d="M5 86.7L202 85.5L399 84.5L595 83.9"/>
+        <path class="line" stroke="var(--chart-3)" d="M5 41.4L202 36.9L399 33.2L595 32.5"/>
+      </svg><div class="xaxis"><span>Warmup</span><span>Batch 1</span><span>Batch 2</span><span>Batch 3</span></div>
+    </div></div>
+    <div class="legend"><span><i class="dot"></i>Houses · 32 cycles</span><span><i class="dot before"></i>Dialogs · 16 cycles</span><span><i class="dot third"></i>Scans · 12 cycles</span></div>
+    <figcaption>All 12 observed WebGL contexts received explicit context loss. No confirmed application leak in these finite tests; modest heap growth and graphics retention still warrant longer profiling.</figcaption>
+  </figure>
+</main>
+</body>
+</html>
