@@ -239,18 +239,6 @@ header {
   align-items: center;
   gap: 27px;
 }
-.home-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  white-space: nowrap;
-  color: #839080;
-  font-size: 12px;
-}
-.home-label .icon {
-  width: 15px;
-  height: 15px;
-}
 .avatar {
   display: grid;
   place-items: center;
@@ -1064,7 +1052,6 @@ legend {
     display: none;
   }
   .header-right.account-signed-in { display: flex; margin-left: auto; }
-  .header-right .home-label { display: none; }
   .search-wrap {
     width: 100%;
   }

@@ -132,7 +132,7 @@ header { background: var(--header); }
 .nav-link, .workspace-label, .sidebar-section, .sidebar-bottom p,
 .local-status, .backup, .breadcrumb, .breadcrumb button, .page-heading p,
 .card-body > p, .card-title > span, .card-foot, .item-info p,
-.section-hint, .home-label, footer, .search-wrap,
+.section-hint, footer, .search-wrap,
 .search-wrap > input::placeholder, .search-wrap > kbd,
 .search-result small, .results-label, .empty-items, .empty-items h3,
 .modal-description, form > label, label > span, legend,
