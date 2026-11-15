@@ -71,6 +71,11 @@ export async function readObject(blob, format) {
       const positions = child.geometry?.getAttribute("position");
       if (positions) {
         const indices = child.geometry.index;
+        if (indices && (indices.itemSize !== 1 || indices.normalized ||
+            ![Uint8Array, Uint16Array, Uint32Array].some((Type) => indices.array instanceof Type)))
+          throw Error("This scan contains invalid geometry indices.");
+        if (child.isMesh && (indices?.count || positions.count) % 3 !== 0)
+          throw Error("This scan contains incomplete triangles.");
         vertices += Math.max(positions.count, indices?.count || 0) *
           (child.isInstancedMesh ? child.count : 1);
         if (vertices > MAX_SCAN_VERTICES) throw detailError();

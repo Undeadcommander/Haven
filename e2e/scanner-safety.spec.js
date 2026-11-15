@@ -155,6 +155,26 @@ test("a cloud replacement during file reading cannot be overwritten by an older 
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem("haven-account:scanner-test")).inventory.scans[0].id)).toBe("remote-scan");
 });
 
+test("placement also checks identity without update subscriptions or immutable metadata", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(async ({ state, room }) => {
+    const { putAsset } = await import("/src/scan-storage.js");
+    const { openScanViewer } = await import("/src/scan-viewer.js");
+    window.customScanState = state;
+    window.customScanSaves = 0;
+    await putAsset("shared-asset", new Blob([room]));
+    await openScanViewer("living-room", {
+      getState: () => window.customScanState, esc: String, navigate() {},
+      save() { window.customScanSaves++; return true; },
+    });
+  }, { state: inventory(), room });
+  await markerForm(page);
+  await page.evaluate(() => { window.customScanState.scans[0].assetId = "replacement-asset"; });
+  await page.getByRole("button", { name: "Save marker", exact: true }).click();
+  await expect(page.locator(".scan-error")).toContainText("scan or account changed");
+  expect(await page.evaluate(() => window.customScanSaves)).toBe(0);
+});
+
 async function pendingCamera(page, phase) {
   await page.evaluate((phase) => {
     const original = HTMLCanvasElement.prototype.getContext;

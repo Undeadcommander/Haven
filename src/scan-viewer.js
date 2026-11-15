@@ -51,7 +51,7 @@ export async function openScanViewer(locationId, api) {
     return cachedIndex;
   };
   const scan = () => inventoryIndex().scanByLocation.get(locationId);
-  let displayedScan = scan();
+  let displayedScan = scan() ? { ...scan() } : null;
   const markers = () => inventoryIndex().markersByScan.get(scan()?.id) || [];
   const tell = (message, error = false) => {
     status.textContent = message;
@@ -236,7 +236,7 @@ export async function openScanViewer(locationId, api) {
       disposeObject(model);
     }
     model = object;
-    displayedScan = entry;
+    displayedScan = { ...entry };
     scene.add(model);
     stage.querySelector(".scan-empty").hidden = true;
     dialog.querySelector("[data-place-marker]").disabled = false;

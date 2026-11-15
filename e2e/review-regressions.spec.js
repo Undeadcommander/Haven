@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.js";
 import { initialState } from "../src/store.js";
+import { triangleGLB } from "../tests/helpers/scan-fixtures.js";
 
 const triangle = "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
 async function assetKeys(page) {
@@ -25,6 +26,7 @@ for (const [label, format, data] of [
   ["truncated points", "points", Buffer.alloc(3)],
   ["invalid OBJ", "obj", Buffer.from("# no geometry\n")],
   ["truncated GLB", "glb", Buffer.from("glTF")],
+  ["invalid GLB indices", "glb", triangleGLB({ indices: [0, 1, 65535] })],
 ]) {
 test(`restore rejects ${label} and rolls back earlier staged scans`, async ({ page }) => {
   const original = initialState();

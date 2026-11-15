@@ -6,6 +6,8 @@ The review originally reported ten findings. Reinspection withdrew the camera-ca
 
 The original browser probes reproduced malformed backup acceptance and orphaned files after a failed guest copy. They have been converted to ordinary regression tests and expanded to eight browser cases. No expected-failure exemptions remain. Application changes were made after the user explicitly authorized fixes.
 
+A follow-up scanner review found six additional issues. All six now have targeted fixes and regression coverage, documented as findings 11-16.
+
 ## 1. Malformed scan bytes accepted during restore - Fixed
 
 **Original defect:** Restore checked the data URL and file size without parsing the scan. An empty point cloud, truncated GLB, or invalid OBJ could replace the active inventory before the viewer discovered the bad file.
@@ -100,7 +102,57 @@ Cleanup runs on server snapshots and successful publishes. Failures retry with e
 
 **Verification:** Unit tests check total match counts, item-first ordering, normalization, empty searches, location results, and destination-cache reuse. Browser tests check the 30-result cap and total count after deleting an item from a paginated inventory.
 
-## Validation
+## 11. Malformed GLB indices could corrupt inventory - Fixed
+
+**Original defect:** The model validator checked vertex coordinates but not index bounds or layout. A GLB referencing a nonexistent vertex could produce a non-finite ray hit, which was saved as a marker. JSON converted those coordinates to null and the inventory failed validation after reload.
+
+**Change:** [src/scan-model.js](src/scan-model.js) rejects out-of-range indices, unsupported index layouts, and incomplete triangles. [src/scan-viewer.js](src/scan-viewer.js) checks hit coordinates, placement coordinates, and marker coordinates before persistence. Restore uses the same model validator.
+
+**Verification:** Unit tests cover invalid indices, float index buffers, incomplete triangles, and valid GLBs. Browser regressions preserve the previous scan and markers across reload, reject injected non-finite ray hits, and roll back backup staging after a malformed GLB.
+
+## 12. Small GLBs could allocate enormous buffers before rejection - Fixed
+
+**Original defect:** The vertex limit ran after model loading. A 260-byte GLB could request a 1.2 GB typed array before validation reached that limit.
+
+**Change:** [src/scan-limits.js](src/scan-limits.js) preflights GLB headers, accessor counts, combined declared buffer-view/accessor allocations, and bounded scene hierarchies before invoking Three.js. OBJ preflight counts source vertices and triangulated/line/point expansion before parsing; point-cloud counts are checked before geometry creation.
+
+**Verification:** Tests replace the loaders with fail-fast mocks and confirm oversized accessors, overlapping buffer-view budgets, excessive decoded attribute data, oversized OBJ expansion, cyclic hierarchies, and excessive nesting are rejected without invoking a loader.
+
+**Limits:** This bounds the checked geometry and declared buffer allocations, not all browser/GPU memory, image decompression, or main-thread latency. Near-limit mobile memory use still needs physical-device profiling.
+
+## 13. Shared scan files were deleted while still referenced - Fixed
+
+**Original defect:** The viewer unconditionally deleted a removed/replaced scan's asset even if another valid scan referenced that same asset ID.
+
+**Change:** Viewer cleanup checks references and account scope before deleting an old asset. The application's existing reference-aware cleanup remains in place.
+
+**Verification:** Browser tests remove and replace one room's scan, then reload and successfully open another room referencing the same original file.
+
+## 14. Stale model coordinates could be saved against a replacement scan - Fixed
+
+**Original defect:** Remote inventory updates changed the active scan ID while the open viewer and placement form retained the old geometry and coordinates.
+
+**Change:** The main application notifies viewers about inventory replacements. The viewer snapshots scan identity, invalidates stale geometry/forms, and rechecks identity, asset, format, scope, and location around placement and asynchronous imports. Closing or invalidating a viewer aborts its camera capture. Imports that become stale discard their staged file instead of overwriting newer metadata.
+
+**Verification:** Browser tests replace a scan through a simulated account update while a form or file read is pending, and confirm the replacement is preserved. A viewer without subscriptions also rejects a placement after in-place metadata mutation.
+
+## 15. Instanced and indexed workloads bypassed the complexity guard - Fixed
+
+**Original defect:** Counting base position attributes alone allowed small GLBs with many instances or repeated indices to perform far more rendering and picking work than the documented cap suggested.
+
+**Change:** Preflight and loaded-model checks budget geometry using the larger of position/index counts, multiplied by instance counts. Scene-node references contribute to the same budget. Supported small instanced models remain valid.
+
+**Verification:** Unit tests confirm a 900-vertex, 10,000-instance model is rejected before loader allocation, along with excessive indexed work across repeated meshes. Browser tests preserve the active scan when such an import fails.
+
+## 16. Camera cancellation was inactive during startup - Fixed
+
+**Original defect:** Cancel handlers were installed only after session permission, graphics compatibility, and reference-space setup finished. A slow or stuck startup left a busy viewer with an inert Cancel button.
+
+**Change:** Capture registers cancellation before starting asynchronous setup, resolves cancellation immediately, and closes late sessions. Abort signals connect viewer cleanup and invalidation to capture cleanup. Finish is disabled until setup is ready. Setup/session/shutdown failures settle the operation and release graphics resources.
+
+**Verification:** Unit tests cover cancellation during permission, graphics, and reference-space setup, late permission rejection, aborts, early session loss, and failed shutdown. Browser tests exercise all three startup phases and forced viewer closure, while existing simulated-depth tests still save and reload point clouds.
+
+## Initial review validation
 
 - Unit suite: 43 passed, including scan validation, deep-tree complexity, search/index behavior, and cleanup scheduling.
 - Full Playwright suite: 43 passed using installed Microsoft Edge, including all eight new regression cases. Expected-failure annotations were removed.
@@ -109,3 +161,13 @@ Cleanup runs on server snapshots and successful publishes. Failures retry with e
 - Whitespace checks: clean.
 
 Node 24.11.1 and Java 21 were used from temporary local runtime directories; no system PATH or production service was changed. Test/build outputs were directed to temporary directories where configurable. Near-limit backup memory and physical WebXR hardware performance have not been measured.
+
+## Follow-up scanner validation
+
+- Unit suite: 58 passed, including malformed geometry, pre-allocation complexity limits, and camera startup cancellation.
+- Full Playwright rerun: 58 passed using installed Microsoft Edge, including 27 scanner and review regression cases.
+- An earlier full browser run had one transient theme-color assertion failure. All three theme tests passed in isolation, followed by the clean full-suite rerun; no unrelated theme changes were made.
+- Production build: passed. Existing large Three.js and Firebase chunk warnings remain.
+- Whitespace checks: clean.
+
+The follow-up did not change Firestore rules; the emulator suite was not rerun. Camera lifecycle tests use simulated WebXR sessions; physical-device capture and near-limit memory performance still require hardware testing.

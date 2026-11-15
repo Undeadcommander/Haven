@@ -56,7 +56,7 @@ All items, nested containers, and their scans move together. Pins in scans outsi
 
 Open a room or container and choose **Add 3D scan**.
 
-- **Import scan** accepts self-contained GLB (embedded textures, without Draco/KTX2 compression) and OBJ geometry. OBJ material sidecar files are not imported. Maximum file size: 30 MB; maximum geometry: two million vertices. One scan is stored per location.
+- **Import scan** accepts self-contained GLB (embedded textures, without Draco/KTX2 compression) and OBJ geometry. OBJ material sidecar files are not imported. Maximum file size: 30 MB; maximum geometry: two million vertex entries, including repeated indices and instances. GLB preflight also limits declared decoded buffers and accessor data to 128 MB combined, scene nodes to 10,000, and child nesting to 128 levels before model loading. One scan is stored per location.
 - **Scan with camera** requests an immersive WebXR AR session with CPU depth sensing and DOM overlay. It requires HTTPS, camera permission, and a compatible phone/browser that exposes those capabilities. Ordinary desktop webcams and browsers without WebXR depth sensing cannot create a depth scan. Import remains available on those devices.
 - Move slowly around the room, then choose **Finish scan**. Capture collects an untextured point cloud, with 3 cm sampling and a 200,000-point cap. This is experimental depth capture, not photogrammetry or a textured mesh reconstruction service. Tracking drift and device depth quality affect accuracy.
 - Drag to orbit, scroll/pinch to zoom, Shift-drag to pan. Right-click a surface to **Add item** or **Mark container**. On touch screens, select **Place marker**, then tap a surface. Select an existing item/container in this location's subtree or create a new one.
@@ -64,6 +64,8 @@ Open a room or container and choose **Add 3D scan**.
 - Full JSON backups include scan files and markers. Old inventory-only backups still restore. Restore validates scan contents with the same parser used by the viewer, then stages files under new IDs before replacing inventory. A failed restore removes staged files and preserves the active inventory. Export assembles the backup in Blob parts to reduce temporary copies. Export and restore share a 250 MB limit; restore still parses the complete JSON file in memory.
 
 The renderer draws on camera/size changes rather than running a permanent animation loop, caps pixel density at 2, and releases graphics resources when closed. Normal room navigation does not download the 3D engine or read scan files.
+
+Malformed geometry indices and non-finite marker coordinates are rejected before saving. A scan replaced or removed through account sync invalidates the open viewer and any pending placement/import; close and reopen it to continue. Removing or replacing a scan preserves any file still referenced by another scan. Camera cancellation works during permission and graphics setup as well as during capture; a session that arrives after cancellation is immediately closed. Finish scan stays disabled until startup completes.
 
 Validation includes GLB and OBJ loading, mouse/touch placement, linking existing targets, container navigation, transfer cleanup, IndexedDB persistence, full backup restore, unsupported camera handling, and simulated WebXR capture. Physical depth capture has not been verified on real AR hardware in this cloud environment.
 

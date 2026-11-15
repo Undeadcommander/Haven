@@ -28,6 +28,22 @@ test("GLB index validation rejects out-of-range vertices before a scan can be sa
   await validateScanAsset(new Blob([triangleGLB()]), "glb");
 });
 
+test("invalid index layouts and incomplete triangles are not accepted as scans", async () => {
+  const binary = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 2]);
+  const document = {
+    asset: { version: "2.0" }, scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0 }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 1 }] }],
+    buffers: [{ byteLength: binary.byteLength }],
+    bufferViews: [{ buffer: 0, byteLength: 36 }, { buffer: 0, byteOffset: 36, byteLength: 12 }],
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: 3, type: "VEC3", min: [0, 0, 0], max: [1, 1, 0] },
+      { bufferView: 1, componentType: 5126, count: 3, type: "SCALAR" },
+    ],
+  };
+  await assert.rejects(validateScanAsset(new Blob([makeGLB(document, new Uint8Array(binary.buffer))]), "glb"), /invalid geometry indices/);
+  await assert.rejects(validateScanAsset(new Blob([triangleGLB({ indices: [0, 1] })]), "glb"), /incomplete triangles/);
+});
+
 test("GLB preflight rejects oversized allocations and overlapping buffers before loading", async (context) => {
   const parser = context.mock.method(GLTFLoader.prototype, "parseAsync", () => {
     throw Error("The loader must not run");
@@ -74,6 +90,8 @@ test("cyclic GLB node trees and invalid headers are rejected before loading", as
     throw Error("The loader must not run");
   });
   await assert.rejects(validateScanAsset(new Blob([makeGLB({ asset: { version: "2.0" }, nodes: [{ children: [0] }] })]), "glb"), /Invalid GLB/);
+  const deep = Array.from({ length: 131 }, (_, index) => index === 0 ? {} : { children: [index - 1] });
+  await assert.rejects(validateScanAsset(new Blob([makeGLB({ asset: { version: "2.0" }, nodes: deep })]), "glb"), /too detailed/);
   const broken = triangleGLB();
   broken.writeUInt32LE(broken.length + 4, 8);
   await assert.rejects(validateScanAsset(new Blob([broken]), "glb"), /Invalid GLB/);
