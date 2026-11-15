@@ -343,6 +343,9 @@ export function setupAccount(api) {
         .forEach((b) => (b.onclick = openDialog));
       update();
     },
+    get authEpoch() {
+      return authEpoch;
+    },
     get uid() {
       return user?.uid || null;
     },
@@ -364,6 +367,7 @@ export function setupAccount(api) {
       else localStorage.setItem("haven-inventory", JSON.stringify(inventory));
     },
     externalChange(key) {
+      if (user && (key === deletionKey(user.uid) || key === `haven-account:${user.uid}`)) authEpoch++;
       if (user) {
         if (key === deletionKey(user.uid) && localStorage.getItem(key)) {
           ready = false;

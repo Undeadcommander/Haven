@@ -37,17 +37,28 @@ export const setAssetScope = (scope) => {
 };
 export const getAssetScope = () => activeScope;
 const key = (id, scope) => (scope ? `${scope}:${id}` : id);
+// Array keys cannot collide with the string keys used for scan files.
+const ownerKey = (id, scope) => ["backup-owner", key(id, scope)];
 export async function getAsset(id, scope = activeScope) {
   let blob = await transaction("readonly", (s) => s.get(key(id, scope)));
   return blob;
 }
 export const putAsset = (id, blob, scope = activeScope) =>
-  transaction("readwrite", (s) => s.put(blob, key(id, scope)));
+  transaction("readwrite", (s) => {
+    s.delete(ownerKey(id, scope));
+    return s.put(blob, key(id, scope));
+  });
 export const deleteAsset = (id, scope = activeScope) =>
-  transaction("readwrite", (s) => s.delete(key(id, scope)));
+  transaction("readwrite", (s) => {
+    s.delete(ownerKey(id, scope));
+    return s.delete(key(id, scope));
+  });
 export const deleteAssets = (ids, scope = activeScope) => ids.length
   ? transaction("readwrite", (store) => {
-      for (const id of ids) store.delete(key(id, scope));
+      for (const id of ids) {
+        store.delete(ownerKey(id, scope));
+        store.delete(key(id, scope));
+      }
     })
   : Promise.resolve();
 
@@ -76,7 +87,9 @@ export const deleteAccountAssets = (uid) => {
     cursor.onsuccess = () => {
       const entry = cursor.result;
       if (!entry) return;
-      if (typeof entry.key === "string" && entry.key.startsWith(`${uid}:`))
+      if ((typeof entry.key === "string" && entry.key.startsWith(`${uid}:`)) ||
+          (Array.isArray(entry.key) && entry.key[0] === "backup-owner" &&
+            entry.key[1].startsWith(`${uid}:`)))
         store.delete(entry.key);
       entry.continue();
     };
@@ -147,7 +160,73 @@ export async function createBackupBlob(inventory, scope = activeScope) {
   parts.push("]}");
   return new Blob(parts, { type: "application/json" });
 }
-// Stage under new IDs so a failed restore never overwrites the active inventory's files.
+// Compare in bounded chunks, keeping the readwrite transaction alive so the
+// comparison and insert are atomic with respect to other tabs and restores.
+async function sameBytes(a, b) {
+  if (!(a instanceof Blob) || a.size !== b.size) return false;
+  const chunk = 1_048_576;
+  for (let offset = 0; offset < a.size; offset += chunk) {
+    const [left, right] = await Promise.all([
+      a.slice(offset, offset + chunk).arrayBuffer(),
+      b.slice(offset, offset + chunk).arrayBuffer(),
+    ]);
+    const x = new Uint8Array(left), y = new Uint8Array(right);
+    for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
+  }
+  return true;
+}
+async function stageAsset(id, blob, scope, owner) {
+  const db = await open();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("assets", "readwrite"), store = tx.objectStore("assets");
+    let created = false, failure;
+    tx.oncomplete = () => resolve(created);
+    tx.onabort = tx.onerror = () => reject(failure || Error("Could not save the scan. Browser storage may be full or unavailable."));
+    const request = store.get(key(id, scope));
+    request.onsuccess = () => {
+      const existing = request.result;
+      if (existing === undefined) {
+        store.add(blob, key(id, scope));
+        store.put(owner, ownerKey(id, scope));
+        created = true;
+        return;
+      }
+      let comparison;
+      const keepAlive = () => {
+        if (comparison) {
+          if (comparison.error || !comparison.matches) {
+            failure = comparison.error || Error("A scan file ID already exists with different content. Restore cannot overwrite it.");
+            tx.abort();
+          } else {
+            // A later restore depends on this file; disarm earlier rollback.
+            store.delete(ownerKey(id, scope));
+          }
+          return;
+        }
+        const next = store.get(ownerKey(id, scope));
+        next.onsuccess = keepAlive;
+      };
+      keepAlive();
+      sameBytes(existing, blob).then((matches) => {
+        comparison = { matches };
+      }).catch((error) => { comparison = { error }; });
+    };
+  });
+}
+async function rollbackStaged(created, scope, owner) {
+  if (!created.length) return;
+  await transaction("readwrite", (store) => {
+    for (const id of created) {
+      const request = store.get(ownerKey(id, scope));
+      request.onsuccess = () => {
+        if (request.result === owner) {
+          store.delete(key(id, scope));
+          store.delete(ownerKey(id, scope));
+        }
+      };
+    }
+  });
+}
 export async function stageBackup(backup, scope = activeScope) {
   const inventory = structuredClone(backup.inventory),
     created = [];
@@ -159,19 +238,22 @@ export async function stageBackup(backup, scope = activeScope) {
       throw Error("This backup contains conflicting copies of a scan file.");
     assets.set(asset.id, asset.data);
   }
-  const rollback = () => deleteAssets(created, scope);
+  const owner = crypto.randomUUID();
+  const rollback = () => rollbackStaged(created, scope, owner);
   try {
     const validate = inventory.scans?.length
       ? (await import("./scan-model.js")).validateScanAsset : null;
+    const staged = new Set();
     for (const scan of inventory.scans || []) {
       const data = assets.get(scan.assetId);
       const blob = decodeAsset(data);
       // Use the same parser and geometry checks as normal scan import, before
       // any inventory can be replaced. Validation does not create a renderer.
       await validate(blob, scan.format);
-      scan.assetId = crypto.randomUUID();
-      await putAsset(scan.assetId, blob, scope);
-      created.push(scan.assetId);
+      if (!staged.has(scan.assetId)) {
+        if (await stageAsset(scan.assetId, blob, scope, owner)) created.push(scan.assetId);
+        staged.add(scan.assetId);
+      }
     }
     return {
       inventory,

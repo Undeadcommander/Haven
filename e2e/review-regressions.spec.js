@@ -224,13 +224,13 @@ test("backup export preserves shared assets and restore rejects conflicting dupl
       format: backup.format, version: backup.version, assets: backup.assets.length,
       inventoryUnchanged: JSON.stringify(backup.inventory) === JSON.stringify(inventory),
       distinctIds: new Set(stagedIds).size, stagedFilesPresent: stagedFiles.every(Boolean),
-      rolledBack: rolledBack.every((file) => !file), original: await (await getAsset("shared", null)).text(),
+      rolledBack: rolledBack.every(Boolean), original: await (await getAsset("shared", null)).text(),
       duplicateError,
     };
   }, triangle);
   expect(result).toMatchObject({
     format: "haven-backup", version: 2, assets: 1, inventoryUnchanged: true,
-    distinctIds: 4, stagedFilesPresent: true, rolledBack: true, original: triangle,
+    distinctIds: 1, stagedFilesPresent: true, rolledBack: true, original: triangle,
   });
   expect(result.duplicateError).toContain("conflicting copies");
 });

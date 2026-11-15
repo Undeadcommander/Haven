@@ -84,7 +84,7 @@ export function imageFields(kind) {
 
 export function bindImagePicker(dialog, initial, fallback, renderImage = locationImage, defaultSelection = null) {
   let selected = initial ?? defaultSelection, custom = initial?.startsWith("data:") ? initial : null;
-  let pending = false, disposed = false, cropSession = null, customSource = null;
+  let pending = false, disposed = false, cropSession = null, cropOriginal = null, customSource = null;
   const picker = dialog.querySelector(".location-image-picker");
   const preview = picker.querySelector("[data-image-preview]");
   const status = picker.querySelector("[data-image-status]");
@@ -115,16 +115,19 @@ export function bindImagePicker(dialog, initial, fallback, renderImage = locatio
   };
   const active = () => !disposed && picker.isConnected && dialog.open;
   const finishCrop = () => {
+    cropSession?.dispose();
     cropSession = null;
+    cropOriginal = null;
     pending = false;
     editor.hidden = true;
     choices.hidden = false;
     refresh();
   };
-  const startCrop = (image, framing) => {
-    cropSession = bindPhotoEditor(editor, image, framing);
+  const startCrop = (image, framing, original = null) => {
     choices.hidden = true;
     editor.hidden = false;
+    cropSession = bindPhotoEditor(editor, image, framing);
+    cropOriginal = original;
     picker.disabled = false;
     status.textContent = "Adjust your photo, then choose Use photo.";
     refresh();
@@ -133,7 +136,8 @@ export function bindImagePicker(dialog, initial, fallback, renderImage = locatio
   if (editor) {
     editor.querySelector("[data-photo-apply]").onclick = () => {
       try {
-        const image = encodePhoto(cropSession.image, cropSession.crop());
+        const image = cropOriginal && cropSession.unchanged()
+          ? cropOriginal : encodePhoto(cropSession.image, cropSession.crop());
         customSource = { image: cropSession.image, framing: cropSession.framing() };
         selected = custom = image;
         finishCrop();
@@ -155,7 +159,9 @@ export function bindImagePicker(dialog, initial, fallback, renderImage = locatio
       refresh();
       try {
         const image = customSource?.image || await readPhoto(custom);
-        if (active()) startCrop(image, customSource?.framing);
+        if (active()) startCrop(image, customSource?.framing || {
+          x: 0, y: 0, width: image.naturalWidth, height: image.naturalHeight,
+        }, custom);
       } catch (error) {
         if (active()) {
           pending = false;
@@ -203,7 +209,8 @@ export function bindImagePicker(dialog, initial, fallback, renderImage = locatio
   };
   dialog.addEventListener("close", () => {
     disposed = true;
-    cropSession = customSource = null;
+    cropSession?.dispose();
+    cropSession = cropOriginal = customSource = null;
   }, { once: true });
   refresh();
   return () => {

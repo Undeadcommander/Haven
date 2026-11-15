@@ -64,9 +64,11 @@ let index = createIndex(state),
 const ITEMS_PER_PAGE = 100;
 const root = document.querySelector("#app");
 const inventoryChanges = new EventTarget();
+let inventoryEpoch = 0;
 let cancelDrag = () => {};
 const account = setupAccount({
   replace(inventory) {
+    inventoryEpoch++;
     state = inventory;
     index = createIndex(state);
     current = null;
@@ -91,6 +93,7 @@ function save(next) {
     );
     return false;
   }
+  inventoryEpoch++;
   state = next;
   index = createIndex(state);
   const retainedAssets = new Set(next.scans.map((scan) => scan.assetId));
@@ -561,6 +564,12 @@ async function exportData() {
   }
 }
 function importData() {
+  const owner = account.authEpoch;
+  const version = inventoryEpoch;
+  const scope = getAssetScope();
+  const isCurrent = () => account.authEpoch === owner && inventoryEpoch === version && getAssetScope() === scope;
+  const staleMessage = "Your account or inventory changed. Please choose the backup again.";
+  const requireCurrent = () => { if (!isCurrent()) throw Error(staleMessage); };
   const input = document.createElement("input");
   input.type = "file";
   input.accept = ".json,application/json";
@@ -570,7 +579,9 @@ function importData() {
       if (!file) return;
       if (file.size > MAX_BACKUP_BYTES)
         throw Error("This backup exceeds the 250 MB restore limit.");
-      const parsed = JSON.parse(await file.text());
+      const text = await file.text();
+      requireCurrent();
+      const parsed = JSON.parse(text);
       const modern = parsed.format === "haven-backup" && parsed.version === 2;
       const data = modern ? parsed.inventory : parsed;
       if (!validState(data) || (modern && !Array.isArray(parsed.assets)))
@@ -584,21 +595,22 @@ function importData() {
         `Replace your inventory with ${data.locations.length} spaces, ${data.items.length} items, and ${data.scans?.length || 0} scans? Export your current inventory first to keep a copy.`,
         "",
         async (_, dialog) => {
+          const form = dialog.querySelector("form");
+          const ownsDialog = () => dialog.isConnected && dialog.open && dialog.querySelector("form") === form;
           const buttons = dialog.querySelectorAll("button");
           buttons.forEach((b) => (b.disabled = true));
           const preventClose = (e) => e.preventDefault();
           dialog.addEventListener("cancel", preventClose);
           let staged;
           try {
-            const scope = getAssetScope();
+            requireCurrent();
+            if (!ownsDialog()) throw Error(staleMessage);
             staged = modern
               ? await stageBackup(parsed)
               : { inventory: data, rollback: async () => {} };
-            if (scope !== getAssetScope()) {
+            if (!isCurrent() || !ownsDialog()) {
               await staged.rollback();
-              throw Error(
-                "The account changed during restore. Please try again.",
-              );
+              throw Error(staleMessage);
             }
             if (!save(staged.inventory)) {
               await staged.rollback();
@@ -610,8 +622,8 @@ function importData() {
             toast("Your inventory and scans have been restored.");
           } catch (error) {
             toast(error.message || "Could not restore the backup.", true);
-            dialog.querySelector(".modal-description").textContent =
-              error.message;
+            if (ownsDialog())
+              form.querySelector(".modal-description").textContent = error.message;
           } finally {
             dialog.removeEventListener("cancel", preventClose);
             buttons.forEach((b) => (b.disabled = false));
