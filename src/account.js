@@ -34,6 +34,10 @@ export function setupAccount(api) {
     deletionFlow = null,
     authEpoch = 0,
     copyingGuest = false;
+  let guestValue = api.guestSnapshot;
+  if (guestValue === undefined) {
+    try { guestValue = localStorage.getItem("haven-inventory"); } catch {}
+  }
   const sync = new AccountSync({
     storage: localStorage,
     remote: {},
@@ -43,14 +47,14 @@ export function setupAccount(api) {
     },
     notify: update,
   });
-  const guest = () => {
+  const guest = (remember = false) => {
     const raw = localStorage.getItem("haven-inventory");
-    if (!raw) return initialState();
-    const parsed = JSON.parse(raw);
+    const parsed = raw ? JSON.parse(raw) : initialState();
     if (!validState(parsed))
       throw Error(
         "Device inventory cannot be read. Restore a backup before copying.",
       );
+    if (remember) guestValue = raw;
     return parsed;
   };
   let cleanupTimer;
@@ -142,7 +146,7 @@ export function setupAccount(api) {
       await sync.select(null);
       setAssetScope(null);
       try {
-        api.replace(guest());
+        api.replace(guest(true));
       } catch (error) {
         problem = error.message;
         api.replace(initialState(), { storageIssue: "Saved data could not be loaded. Editing is paused to protect it. Export the raw saved data, reload to retry, or restore a backup." });
@@ -398,10 +402,25 @@ export function setupAccount(api) {
       if (!user && api.storageIssue?.() && !replaceUnreadable)
         throw Error("Editing is paused to protect unreadable saved data. Export raw recovery data, reload, or explicitly restore a backup first.");
       if (user) sync.saveLocal(inventory);
-      else localStorage.setItem("haven-inventory", JSON.stringify(inventory));
+      else {
+        const value = JSON.stringify(inventory);
+        // Storage events may be queued while this tab still shows an older
+        // inventory. Check the persisted snapshot at the write boundary too.
+        if (localStorage.getItem("haven-inventory") !== guestValue)
+          throw Error("This device inventory changed in another tab. Reload this tab before editing further.");
+        localStorage.setItem("haven-inventory", value);
+        guestValue = value;
+      }
       scheduleAssetCleanup();
     },
     externalChange(key, change) {
+      if (user && key === null) {
+        authEpoch++;
+        problem = "This account changed in another tab. Reload this tab before editing further.";
+        ready = false;
+        sync.pauseForExternalChange();
+        return;
+      }
       if (user && key === accountKey(user.uid) && sync.reconcileCache(change)) return;
       if (user && (key === deletionKey(user.uid) || key === `haven-account:${user.uid}`)) authEpoch++;
       if (user) {
@@ -418,8 +437,8 @@ export function setupAccount(api) {
         }
         return;
       }
-      if (key === "haven-inventory") {
-        api.replace(guest());
+      if (key === "haven-inventory" || key === null) {
+        api.replace(guest(true));
         scheduleAssetCleanup();
       }
     },

@@ -9,6 +9,8 @@ import { houseSwitcherMarkup, bindHouseSwitcher } from "./house-switcher.js";
 import "./house-switcher.css";
 import { addHouse, renameHouse, withHouses, inventoryForHouse, replaceHouseInventory, MAX_HOUSE_NAME_LENGTH } from "./houses.js";
 import { pruneScanLinks, transferItem, transferContainer } from "./scan-data.js";
+import { removeItem, removeLocation } from "./inventory-delete.js";
+import { createDeletionMoves } from "./deletion-moves.js";
 import {
   createBackupBlob,
   MAX_BACKUP_BYTES,
@@ -45,10 +47,12 @@ const esc = (s) =>
       ],
   );
 const recoveryMessage = "Saved data could not be loaded. Editing is paused to protect it. Export the raw saved data, reload to retry, or restore a backup.";
+let guestSnapshot;
 let state = initialState(),
   storageIssue = "";
 try {
   const raw = localStorage.getItem("haven-inventory");
+  guestSnapshot = raw;
   if (raw) {
     const parsed = JSON.parse(raw);
     if (!validState(parsed)) throw Error("invalid");
@@ -79,6 +83,7 @@ let inventoryEpoch = 0;
 let cancelDrag = () => {};
 let unbindHouseSwitcher = () => {};
 const account = setupAccount({
+  guestSnapshot,
   storageIssue: () => storageIssue,
   replace(next, options = {}) {
     inventoryEpoch++;
@@ -214,11 +219,16 @@ function card(l) {
           .map((i) => `<span>${esc(i.name)}</span>`)
           .join("")
       : '<span class="empty-chip">Ready for your first item</span>'
-  }${summary.count > 3 ? `<span>+${summary.count - 3}</span>` : ""}</div><div class="card-foot">${icon("box")} ${sub.length ? `${sub.length} container${sub.length === 1 ? "" : "s"}` : "No containers yet. Room to begin."}${icon("chevron")}</div></div></button><button class="icon-button card-settings" data-location-settings="${esc(l.id)}" aria-label="Settings for ${esc(l.name)}" title="${l.parentId === null ? "Edit" : "Edit or move"} ${esc(l.name)}">${icon("gear")}</button></article>`;
+  }${summary.count > 3 ? `<span>+${summary.count - 3}</span>` : ""}</div><div class="card-foot">${icon("box")} ${sub.length ? `${sub.length} container${sub.length === 1 ? "" : "s"}` : "No containers yet. Room to begin."}${icon("chevron")}</div></div></button><button class="icon-button card-settings" data-location-settings="${esc(l.id)}" aria-label="Settings for ${esc(l.name)}" title="${l.parentId === null ? "Edit or delete" : "Edit, move, or delete"} ${esc(l.name)}">${icon("gear")}</button></article>`;
 }
 function render() {
   cancelDrag();
   unbindHouseSwitcher();
+  const previousEditor = root.querySelector("#editor");
+  if (previousEditor) {
+    previousEditor.close();
+    clearClosedEditor({ currentTarget: previousEditor });
+  }
   if (current && !index.byId.has(current)) current = null;
   const room = index.byId.get(current),
     rooms = index.children.get(null) || [],
@@ -253,7 +263,7 @@ function itemSection(items, all) {
   itemPage = Math.max(0, Math.min(itemPage, pages - 1));
   const visible = items.slice(itemPage * ITEMS_PER_PAGE, (itemPage + 1) * ITEMS_PER_PAGE);
   const pagination = pages > 1 ? `<nav class="item-pagination" aria-label="Inventory pages"><button class="secondary" data-item-page="${itemPage - 1}" ${itemPage === 0 ? "disabled" : ""}>Previous items</button><span role="status">Page ${itemPage + 1} of ${pages}</span><button class="secondary" data-item-page="${itemPage + 1}" ${itemPage + 1 === pages ? "disabled" : ""}>Next items</button></nav>` : "";
-  return `<section class="items-section"><div class="section-heading"><h2>${all ? "Your inventory" : "Items in this space"} <span>${items.length}</span></h2>${!all ? `<button class="text-button" data-add-item>${icon("plus")} Add item</button>` : ""}</div>${items.length ? `<div class="item-list">${visible.map((i) => `<article id="item-${esc(i.id)}" class="item-row ${i.color || "sage"} ${highlight === i.id ? "highlight" : ""}" draggable="true" data-drag-kind="item" data-drag-id="${esc(i.id)}"><div class="item-symbol">${itemImage(i.image) || icon("box")}</div><div class="item-info"><h3>${esc(i.name)}</h3><p>${esc(i.notes || "No extra details")}${all ? `<button class="item-path" data-find="${esc(i.id)}">${esc(index.path(i.locationId))} ${icon("arrow")}</button>` : ""}</p></div><button class="icon-button" data-move-item="${esc(i.id)}" aria-label="Move ${esc(i.name)}">${icon("move")}</button><button class="icon-button" data-edit-item="${esc(i.id)}" aria-label="Settings for ${esc(i.name)}" title="Edit or move ${esc(i.name)}">${icon("gear")}</button><button class="icon-button" data-delete-item="${esc(i.id)}" aria-label="Delete ${esc(i.name)}">${icon("trash")}</button></article>`).join("")}</div>${pagination}` : `<div class="empty-items">${icon("box")}<h3>A place for your first find.</h3><p>${all ? "Open a room to add your first item." : "Add an item and a few details so it’s easy to find later."}</p>${!all ? '<button class="secondary" data-add-item>Add your first item</button>' : ""}</div>`}</section>`;
+  return `<section class="items-section"><div class="section-heading"><h2>${all ? "Your inventory" : "Items in this space"} <span>${items.length}</span></h2>${!all ? `<button class="text-button" data-add-item>${icon("plus")} Add item</button>` : ""}</div>${items.length ? `<div class="item-list">${visible.map((i) => `<article id="item-${esc(i.id)}" class="item-row ${i.color || "sage"} ${highlight === i.id ? "highlight" : ""}" draggable="true" data-drag-kind="item" data-drag-id="${esc(i.id)}"><div class="item-symbol">${itemImage(i.image) || icon("box")}</div><div class="item-info"><h3>${esc(i.name)}</h3><p>${esc(i.notes || "No extra details")}${all ? `<button class="item-path" data-find="${esc(i.id)}">${esc(index.path(i.locationId))} ${icon("arrow")}</button>` : ""}</p></div><button class="icon-button" data-move-item="${esc(i.id)}" aria-label="Move ${esc(i.name)}">${icon("move")}</button><button class="icon-button" data-edit-item="${esc(i.id)}" aria-label="Settings for ${esc(i.name)}" title="Edit, move, or delete ${esc(i.name)}">${icon("gear")}</button><button class="icon-button" data-delete-item="${esc(i.id)}" aria-label="Delete ${esc(i.name)}">${icon("trash")}</button></article>`).join("")}</div>${pagination}` : `<div class="empty-items">${icon("box")}<h3>A place for your first find.</h3><p>${all ? "Open a room to add your first item." : "Add an item and a few details so it’s easy to find later."}</p>${!all ? '<button class="secondary" data-add-item>Add your first item</button>' : ""}</div>`}</section>`;
 }
 function bind() {
   unbindHouseSwitcher = bindHouseSwitcher({
@@ -338,7 +348,7 @@ function bind() {
     ?.addEventListener("click", () => moveContainer(current));
   root
     .querySelector("[data-delete-location]")
-    ?.addEventListener("click", deleteLocation);
+    ?.addEventListener("click", () => deleteLocation(current));
   root
     .querySelectorAll("[data-edit-item]")
     .forEach(
@@ -347,21 +357,7 @@ function bind() {
           editItem(state.items.find((i) => i.id === b.dataset.editItem))),
     );
   root.querySelectorAll("[data-delete-item]").forEach(
-    (b) =>
-      (b.onclick = () =>
-        confirmDelete(
-          "Delete this item?",
-          "This item will be removed from your inventory.",
-          () => {
-            if (
-              save({
-                ...state,
-                items: state.items.filter((i) => i.id !== b.dataset.deleteItem),
-              })
-            )
-              render();
-          },
-        )),
+    (b) => (b.onclick = () => deleteItem(b.dataset.deleteItem)),
   );
   root.querySelectorAll("[data-find]").forEach(
     (b) =>
@@ -408,11 +404,27 @@ function showSearch() {
 }
 function clearClosedEditor(event) {
   const dialog = event.currentTarget;
-  if (!dialog.open) dialog.replaceChildren();
+  if (!dialog.open) {
+    // Native form bookkeeping can retain a detached form. Empty it first so
+    // its destination options and photo controls are released as well.
+    dialog.querySelectorAll("form").forEach((form) => {
+      form.onsubmit = null;
+      form.replaceChildren();
+    });
+    dialog.replaceChildren();
+  }
 }
-function modal(title, description, fields, onSubmit, label = "Save") {
+function modal(title, description, fields, onSubmit, label = "Save", { destructive = false } = {}) {
   const d = document.querySelector("#editor");
-  d.innerHTML = `<form><div class="modal-heading"><div><span class="eyebrow">MAKE ROOM</span><h2>${title}</h2></div><button type="button" class="icon-button" data-cancel aria-label="Close dialog">${icon("close")}</button></div><p class="modal-description">${description}</p>${fields}<div class="modal-actions"><button type="button" class="secondary" data-cancel>Cancel</button><button type="submit" class="primary">${label}</button></div></form>`;
+  d.classList.toggle("delete-dialog", destructive);
+  d.setAttribute("aria-labelledby", "editor-title");
+  d.setAttribute("aria-describedby", "editor-description");
+  d.querySelectorAll("form").forEach((form) => {
+    form.onsubmit = null;
+    form.replaceChildren();
+  });
+  const content = `<p class="modal-description" id="editor-description">${description}</p>${fields}`;
+  d.innerHTML = `<form><div class="modal-heading"><div><span class="eyebrow">${destructive ? "DELETE SPACE OR ITEM" : "MAKE ROOM"}</span><h2 id="editor-title">${title}</h2></div><button type="button" class="icon-button" data-cancel aria-label="Close dialog">${icon("close")}</button></div>${destructive ? `<div class="delete-content">${content}</div>` : content}<div class="modal-actions"><button type="button" class="${destructive ? "primary" : "secondary"}" data-cancel ${destructive ? "autofocus" : ""}>Cancel</button><button type="submit" class="${destructive ? "secondary destructive-action" : "primary"}">${label}</button></div></form>`;
   d.querySelectorAll("[data-cancel]").forEach(
     (b) => (b.onclick = () => d.close()),
   );
@@ -424,6 +436,7 @@ function modal(title, description, fields, onSubmit, label = "Save") {
   // through their handlers until the next navigation or modal is opened.
   d.onclose = clearClosedEditor;
   d.showModal();
+  if (destructive) d.querySelector(".modal-actions [data-cancel]").focus({ preventScroll: true });
 }
 function colorFields(selected = "sage") {
   return `<fieldset class="color-picker" aria-describedby="photo-color-help"><legend>Color</legend><div class="color-options">${inventoryColors.map((color) => `<label class="color-option ${color}"><input type="radio" name="color" value="${color}" ${selected === color ? "checked" : ""}><span>${color}</span></label>`).join("")}</div><p id="photo-color-help" class="modal-description" data-photo-color-note hidden>Your photo keeps its own colors. Choose artwork to use these colors.</p></fieldset>`;
@@ -436,6 +449,19 @@ function showSettingsError(dialog, message) {
   const error = dialog.querySelector("[data-settings-error]");
   error.textContent = message;
   error.hidden = false;
+  if (dialog.classList.contains("delete-dialog")) error.scrollIntoView({ block: "nearest" });
+}
+function addDeleteOption(kind, onDelete) {
+  const dialog = document.querySelector("#editor");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "secondary editor-delete";
+  button.innerHTML = `${icon("trash")} Delete ${kind}`;
+  button.onclick = () => {
+    dialog.close();
+    onDelete();
+  };
+  dialog.querySelector(".modal-actions").prepend(button);
 }
 function addImportOption(kind, destination) {
   const dialog = document.querySelector("#editor");
@@ -549,6 +575,7 @@ function editLocation(l, parent) {
   );
   getImage = bindImagePicker(document.querySelector("#editor"), l?.image,
     isRoom ? illustration() : `<div class="container-art">${icon("folder")}</div>`, locationImage, isRoom ? "living" : null);
+  if (l) addDeleteOption(isRoom ? "room" : "container", () => deleteLocation(l.id));
   if (!l && !isRoom) addImportOption("container", parent);
 }
 function editItem(item) {
@@ -596,38 +623,118 @@ function editItem(item) {
   );
   getImage = bindImagePicker(document.querySelector("#editor"), item?.image,
     `<div class="container-art">${icon("box")}</div>`, itemImage);
+  if (item) addDeleteOption("item", () => deleteItem(item.id));
   if (!item) addImportOption("item", current);
 }
 function confirmDelete(title, description, fn, label = "Delete") {
+  const version = inventoryEpoch;
   modal(
     title,
     description,
-    "",
+    '<p class="warning" data-settings-error role="alert" hidden></p>',
     (_, d) => {
-      d.close();
-      fn();
+      try {
+        if (inventoryEpoch !== version) throw Error("Your inventory changed. Cancel and start again to review the latest contents.");
+        fn(d);
+      } catch (error) {
+        showSettingsError(d, error.message);
+      }
     },
     label,
+    { destructive: true },
   );
 }
-function deleteLocation() {
-  const l = index.byId.get(current),
-    ids = descendants(index, current),
-    count = state.items.filter((i) => ids.has(i.locationId)).length;
+function deleteItem(id) {
+  const item = index.itemById.get(id);
+  if (!item) return;
   confirmDelete(
-    `Delete ${esc(l.name)}?`,
-    `This removes this space, ${ids.size - 1} nested containers, and ${count} items. This cannot be undone.`,
-    () => {
-      if (
-        save({
-          ...state,
-          locations: state.locations.filter((x) => !ids.has(x.id)),
-          items: state.items.filter((i) => !ids.has(i.locationId)),
-        })
-      )
-        navigate(l.parentId);
+    `Delete ${esc(item.name)}?`,
+    "This item and its scan pins will be removed from your inventory. This cannot be undone.",
+    (dialog) => {
+      if (!save(removeItem(state, id))) throw Error("Could not save this deletion. Your item has not been deleted. Please try again.");
+      dialog.close();
+      render();
+      toast(`${item.name} deleted.`);
     },
+    "Delete item",
   );
+}
+function finishLocationDeletion(id, options, dialog) {
+  const location = index.byId.get(id);
+  const keptContents = options.mode === "move" && (index.children.get(id)?.length || index.items.get(id)?.length);
+  const next = removeLocation(state, id, options);
+  if (!save(next)) throw Error("Could not save this deletion. Nothing has been moved or deleted. Please try again.");
+  dialog.close();
+  if (current && !index.byId.has(current)) navigate(location.parentId);
+  else render();
+  toast(`${location.name} deleted.${keptContents ? " Contents kept safely." : ""}`);
+}
+function deleteLocation(id) {
+  const location = index.byId.get(id);
+  if (!location) return;
+  const version = inventoryEpoch;
+  const ids = descendants(index, id);
+  const containers = state.locations.filter((entry) => entry.id !== id && ids.has(entry.id));
+  const items = state.items.filter((item) => ids.has(item.locationId));
+  const kind = location.parentId === null ? "room" : "container";
+  const scanNote = "The deleted space’s own 3D scan will also be removed. This cannot be undone.";
+  if (!containers.length && !items.length) {
+    confirmDelete(`Delete ${esc(location.name)}?`, `This ${kind} is empty. ${scanNote}`,
+      (dialog) => finishLocationDeletion(id, { mode: "move" }, dialog), `Delete ${kind}`);
+    return;
+  }
+  const destinations = destinationOptions(null, ids);
+  const moves = createDeletionMoves({ rootId: id, containers, items, index, esc, destinations });
+  const summary = `${containers.length} container${containers.length === 1 ? "" : "s"} and ${items.length} item${items.length === 1 ? "" : "s"}`;
+  modal(
+    `Delete ${esc(location.name)}?`,
+    `This ${kind} contains ${summary}. Choose what happens to the contents before deleting it.`,
+    `<fieldset class="deletion-choices"><legend>What should happen to the contents?</legend>
+      <label class="deletion-option"><input type="radio" name="delete-mode" value="move" ${destinations ? "checked" : "disabled"} required><span><strong>Move contents</strong><small>Keep your containers and items, then delete only this ${kind}.</small></span></label>
+      <label class="deletion-option"><input type="radio" name="delete-mode" value="delete" required><span><strong>Delete everything</strong><small>Delete this ${kind} and everything inside. You will confirm again.</small></span></label>
+    </fieldset>
+    ${destinations ? "" : '<p class="warning">There is no destination outside this space. Cancel and add another room to keep the contents, or choose Delete everything.</p>'}
+    <fieldset data-delete-move ${destinations ? "" : "hidden disabled"}>
+      ${moves.fields}
+      <p class="modal-description">Pins showing moved contents in their old positions will be cleared. ${scanNote}</p>
+    </fieldset><p class="warning" data-settings-error role="alert" hidden></p>`,
+    (data, dialog) => {
+      try {
+        if (inventoryEpoch !== version) throw Error("Your inventory changed. Cancel and start again to review the latest contents.");
+        if (data.get("delete-mode") === "delete") {
+          dialog.close();
+          confirmDelete(
+            `Delete everything in ${esc(location.name)}?`,
+            `Permanently delete this ${kind}, ${summary}, and their scans and pins. This cannot be undone.`,
+            (confirmation) => finishLocationDeletion(id, { mode: "delete" }, confirmation),
+            "Delete everything",
+          );
+          return;
+        }
+        if (data.get("delete-mode") !== "move") throw Error("Choose what should happen to the contents.");
+        finishLocationDeletion(id, moveEditor.read(data), dialog);
+      } catch (error) {
+        showSettingsError(dialog, error.message);
+      }
+    },
+    "Move contents & delete",
+    { destructive: true },
+  );
+  const dialog = document.querySelector("#editor");
+  const moveEditor = moves.bind(dialog);
+  const update = () => {
+    const mode = dialog.querySelector('[name="delete-mode"]:checked')?.value;
+    const moving = mode === "move";
+    const moveFields = dialog.querySelector("[data-delete-move]");
+    moveFields.hidden = moveFields.disabled = !moving;
+    moveEditor.update(moving);
+    const submit = dialog.querySelector('[type="submit"]');
+    submit.textContent = moving ? "Move contents & delete" : "Continue";
+    submit.disabled = !mode;
+    dialog.querySelector("[data-settings-error]").hidden = true;
+  };
+  dialog.querySelectorAll('[name="delete-mode"], [name="move-layout"]').forEach((input) => input.onchange = update);
+  update();
 }
 let toastTimer;
 function toast(message, error = false) {

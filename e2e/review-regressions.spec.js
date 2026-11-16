@@ -181,7 +181,7 @@ test("large inventory pages stay bounded and search opens the page containing it
   await expect(page.locator(".item-row")).toHaveCount(5);
   await expect(page.locator(".highlight")).toContainText("Book 204");
   await page.getByRole("button", { name: "Delete Book 204", exact: true }).click();
-  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await page.getByRole("button", { name: "Delete item", exact: true }).click();
   await expect(page.locator(".item-row")).toHaveCount(4);
   await page.locator("[data-all]").click();
   await expect(page.locator(".item-row")).toHaveCount(100);

@@ -48,7 +48,9 @@ test("nested inventory, exact-location search, persistence, editing and deletion
   await page
     .getByRole("button", { name: "Delete location", exact: true })
     .click();
-  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await page.getByRole("radio", { name: /Delete everything/ }).check();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByRole("button", { name: "Delete everything", exact: true }).click();
   await expect(page.locator("h1")).toHaveText("Top drawer");
   await page.getByRole("searchbox").fill("Car keys");
   await expect(page.locator(".no-results")).toBeVisible();
@@ -82,7 +84,7 @@ test("mobile layout fits viewport and backup can be restored", async ({
   await file.saveAs("/tmp/haven-test-backup.json");
   await page.getByRole("button", { name: "Open Kitchen", exact: true }).click();
   await page.getByRole("button", { name: "Delete location" }).click();
-  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await page.getByRole("button", { name: "Delete room", exact: true }).click();
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Restore a backup" }).first().click();
   await (await chooser).setFiles("/tmp/haven-test-backup.json");
