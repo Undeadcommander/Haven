@@ -77,8 +77,14 @@ test("same-account external change rejects at confirmation", async ({ page }) =>
   await page.evaluate(async u => { await window.changeAuth(u); }, user("alice"));
   await choose(page, backup());
   await expect(page.getByText("Restore this backup?")).toBeVisible();
-  const inventory = await page.evaluate(() => localStorage.getItem("haven-account:alice"));
-  await page.evaluate(() => window.dispatchEvent(new StorageEvent("storage", { key: "haven-account:alice" })));
+  const replacement = initialState();
+  replacement.locations[0].name = "External room";
+  const inventory = await page.evaluate((value) => {
+    const record = JSON.stringify({ inventory: value, revision: 1, dirty: false });
+    localStorage.setItem("haven-account:alice", record);
+    window.dispatchEvent(new StorageEvent("storage", { key: "haven-account:alice" }));
+    return record;
+  }, replacement);
   await page.getByRole("button", { name: "Restore", exact: true }).click();
   await expect(page.locator("#editor .modal-description")).toHaveText("Your account or inventory changed. Please choose the backup again.");
   expect(await page.evaluate(() => localStorage.getItem("haven-account:alice"))).toBe(inventory);

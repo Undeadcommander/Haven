@@ -90,6 +90,8 @@ See [Firebase account setup](firebase/SETUP.md). The integration requires a real
 
 Use **Sign in → Continue with Google** to create or access an account. Existing guest data is copied only through the explicit **Copy device inventory to account** action. If a copy fails before its inventory is saved, its staged scan files are removed. Account status reports pending, saving, saved, failed, and conflicting changes. Each account has a separate local cache; scan files remain on the originating device and can be transferred through backups.
 
+Sync acknowledgments and safe cache-only updates with unchanged inventory do not interrupt editing; accepted acknowledgments advance the local sync revision before the next save. If another tab actually changes the inventory, editing and background sync pause and ask you to reload. Queued changes, delayed downloads, and old upload acknowledgments cannot replace a newer tab’s pending cache or discard its retained scan files.
+
 ### Account deletion
 
 Deletion requires a fresh Google verification and removes the Haven authentication account, all Firestore inventory chunks (including older snapshots), the profile, and that account's local cache, recovery copy, and scan files on this browser. The Google account, separate guest inventory, other accounts, downloaded backups, and local copies on other devices are not deleted.

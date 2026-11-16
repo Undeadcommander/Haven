@@ -12,6 +12,7 @@ export class AccountSync {
     this.generation = 0;
     this.status = "guest";
     this.record = null;
+    this.cacheValue = null;
     this.timer = null;
     this.inFlight = null;
     this.remoteKnown = false;
@@ -24,7 +25,49 @@ export class AccountSync {
     this.notify?.();
   }
   cache(record = this.record, uid = this.uid) {
-    this.storage.setItem(accountKey(uid), JSON.stringify(record));
+    const value = JSON.stringify(record);
+    this.storage.setItem(accountKey(uid), value);
+    if (uid === this.uid) this.cacheValue = value;
+  }
+  reconcileCache(change) {
+    if (!this.uid || !this.record || this.status === "stale") return false;
+    try {
+      let next;
+      if (change && (change.oldValue != null || change.newValue != null)) {
+        const previous = change.oldValue === this.cacheValue ? this.record : JSON.parse(change.oldValue);
+        next = JSON.parse(change.newValue);
+        if (!previous || !next ||
+            JSON.stringify(previous.inventory) !== JSON.stringify(next.inventory)) return false;
+      }
+      const value = this.storage.getItem(accountKey(this.uid));
+      if (value === this.cacheValue) return true;
+      const cached = next && value === change.newValue ? next : JSON.parse(value);
+      if (!cached || !Number.isInteger(cached.revision) || cached.revision < this.record.revision ||
+          typeof cached.dirty !== "boolean" ||
+          JSON.stringify(cached.inventory) !== JSON.stringify(this.record.inventory)) return false;
+      const baseAssets = this.record.dirty ? this.record.baseAssets : scanAssets(this.record.inventory);
+      if (cached.dirty && (cached.revision !== this.record.revision ||
+          JSON.stringify(cached.baseAssets) !== JSON.stringify(baseAssets))) return false;
+      this.cacheValue = value;
+      if (cached.revision > this.record.revision) {
+        this.record = { ...cached, inventory: this.record.inventory };
+        clearTimeout(this.timer);
+        this.signal("synced", "Account is up to date");
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  ensureCurrentCache() {
+    if (this.reconcileCache()) return true;
+    this.pauseForExternalChange();
+    return false;
+  }
+  pauseForExternalChange() {
+    if (this.status === "stale") return;
+    this.disconnect();
+    this.signal("stale", "This account changed in another tab. Reload this tab before editing further.");
   }
   disconnect() {
     this.generation++;
@@ -41,12 +84,15 @@ export class AccountSync {
     this.conflictRecord = undefined;
     if (!uid) {
       this.record = null;
+      this.cacheValue = null;
       this.signal("guest");
       return;
     }
     let cached;
+    this.cacheValue = null;
     try {
-      cached = JSON.parse(this.storage.getItem(accountKey(uid)));
+      this.cacheValue = this.storage.getItem(accountKey(uid));
+      cached = JSON.parse(this.cacheValue);
     } catch {}
     this.record =
       cached &&
@@ -86,6 +132,7 @@ export class AccountSync {
   saveLocal(inventory) {
     if (this.status === "deleting" || this.storage.getItem(deletionKey(this.uid)))
       throw Error("Account deletion is in progress. Editing and sync are paused.");
+    if (!this.ensureCurrentCache()) throw Error(this.message);
     // Keep the last account version's files until this edit has been accepted.
     // Older dirty records without this list must defer garbage collection.
     const baseAssets = this.record.dirty ? this.record.baseAssets : scanAssets(this.record.inventory);
@@ -99,17 +146,18 @@ export class AccountSync {
   }
   schedule() {
     clearTimeout(this.timer);
-    if (this.uid && this.remoteKnown && !["conflict", "deleting"].includes(this.status))
+    if (this.uid && this.remoteKnown && !["conflict", "deleting", "stale"].includes(this.status))
       this.timer = setTimeout(() => this.flush(), this.delay);
   }
   async receive(remote, generation = this.generation) {
-    if (generation !== this.generation || !this.uid) return;
+    if (generation !== this.generation || !this.uid || this.status === "stale") return;
     if (isDeletingRecord(remote)) {
       this.disconnect();
       this.signal("deleting", "Account deletion has started. Editing and sync are paused.");
       this.storage.setItem(deletionKey(this.uid), "pending");
       return;
     }
+    if (!this.ensureCurrentCache()) return;
     this.remoteKnown = true;
     if (this.inFlight) {
       this.pendingRemote = remote;
@@ -147,6 +195,8 @@ export class AccountSync {
         throw Error(
           "The account inventory could not be read. Your local copy is unchanged.",
         );
+      if (!this.ensureCurrentCache()) return;
+      if (revision && revision < this.record.revision) return;
       const record = { inventory, revision, dirty: false };
       this.cache(record);
       this.record = record;
@@ -164,9 +214,11 @@ export class AccountSync {
       !this.remoteKnown ||
       this.status === "conflict" ||
       this.status === "deleting" ||
+      this.status === "stale" ||
       this.inFlight
     )
       return;
+    if (!this.ensureCurrentCache() || !this.record.dirty) return;
     const generation = this.generation,
       uid = this.uid,
       record = this.record,
@@ -177,6 +229,7 @@ export class AccountSync {
     try {
       const revision = await task;
       if (generation !== this.generation) return;
+      if (!this.ensureCurrentCache() || revision < this.record.revision) return;
       const next = { ...this.record, revision, dirty: this.edit !== edit,
         baseAssets: scanAssets(record.inventory) };
       this.cache(next);
@@ -187,7 +240,12 @@ export class AccountSync {
       );
     } catch (error) {
       if (generation !== this.generation) return;
-      if (error.code === "sync/conflict") {
+      if (!this.ensureCurrentCache()) return;
+      if (error.code === "sync/conflict" && this.record.revision > record.revision &&
+          error.remote?.revision <= this.record.revision) {
+        this.signal(this.record.dirty ? "pending" : "synced",
+          this.record.dirty ? "New changes waiting to sync" : "Account is up to date");
+      } else if (error.code === "sync/conflict") {
         this.conflictRecord = error.remote;
         this.signal(
           "conflict",
@@ -212,14 +270,14 @@ export class AccountSync {
     }
   }
   retry() {
-    if (!this.uid || ["conflict", "deleting"].includes(this.status) || this.inFlight) return;
+    if (!this.uid || ["conflict", "deleting", "stale"].includes(this.status) || this.inFlight) return;
     // Recheck the server even for a clean local copy or a failed download.
     // Keep the current inventory and let receive() reconcile revisions before writing.
     this.disconnect();
     this.connect();
   }
   get retainedAssetIds() {
-    if (!this.record || this.status === "connecting" || this.status === "deleting" ||
+    if (!this.record || ["connecting", "deleting", "stale"].includes(this.status) ||
         (this.record.dirty && !Array.isArray(this.record.baseAssets))) return null;
     return new Set([...scanAssets(this.record.inventory),
       ...(this.record.dirty ? this.record.baseAssets : [])]);
@@ -235,6 +293,7 @@ export class AccountSync {
   }
   async resolve(choice) {
     if (this.status !== "conflict") return;
+    if (!this.ensureCurrentCache() || this.status !== "conflict") return;
     // Preserve the rejected local version before either conflict resolution choice.
     this.storage.setItem(
       `haven-recovery:${this.uid}`,

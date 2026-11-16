@@ -900,8 +900,9 @@ document.addEventListener("click", (e) => {
     document.querySelector("#search-results").hidden = true;
 });
 window.addEventListener("storage", (e) => {
+  if (e.storageArea && e.storageArea !== localStorage) return;
   try {
-    account.externalChange(e.key);
+    account.externalChange(e.key, e);
   } catch {
     storageIssue = recoveryMessage;
     inventoryEpoch++;

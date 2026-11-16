@@ -79,7 +79,8 @@ export function setupAccount(api) {
   }
   function update() {
     scheduleAssetCleanup();
-    if (sync.status === "deleting") ready = false;
+    if (sync.status === "stale" && ready) authEpoch++;
+    if (["deleting", "stale"].includes(sync.status)) ready = false;
     document.querySelectorAll("[data-account]").forEach((b) => {
       b.hidden = !!user;
     });
@@ -148,7 +149,7 @@ export function setupAccount(api) {
       }
     }
     if (epoch !== authEpoch) return;
-    ready = sync.status !== "deleting";
+    ready = !["deleting", "stale"].includes(sync.status);
     update();
   }
   const initialize = configured
@@ -400,7 +401,8 @@ export function setupAccount(api) {
       else localStorage.setItem("haven-inventory", JSON.stringify(inventory));
       scheduleAssetCleanup();
     },
-    externalChange(key) {
+    externalChange(key, change) {
+      if (user && key === accountKey(user.uid) && sync.reconcileCache(change)) return;
       if (user && (key === deletionKey(user.uid) || key === `haven-account:${user.uid}`)) authEpoch++;
       if (user) {
         if (key === deletionKey(user.uid) && localStorage.getItem(key)) {
@@ -412,7 +414,7 @@ export function setupAccount(api) {
           problem =
             "This account changed in another tab. Reload this tab before editing further.";
           ready = false;
-          update();
+          sync.pauseForExternalChange();
         }
         return;
       }
