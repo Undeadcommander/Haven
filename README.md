@@ -43,11 +43,9 @@ If guest inventory cannot be loaded, ordinary edits are blocked rather than repl
 
 ## Storage and performance
 
-Inventory and marker metadata are stored in this browser's localStorage; binary scans are stored in IndexedDB, on this site's origin. Optional Google accounts sync inventory and scan markers through Firestore when the project owner enables the backend. Guest mode stays local. Export JSON backups from the sidebar (or footer on mobile); restoring replaces the current inventory after confirmation. Clearing browser data removes the inventory. Storage failures are reported and changes are not silently accepted.
+Inventory and marker metadata are stored in this browser's localStorage; binary scans are stored in IndexedDB, on this site's origin. Optional Google accounts sync inventory and scan markers. Guest mode stays local. Export JSON backups from the sidebar (or footer on mobile); restoring replaces the current inventory after confirmation. Clearing browser data removes the inventory. Storage failures are reported and changes are not silently accepted.
 
-Navigation runs locally without network requests. Location, item, scan, and marker lookup maps and card summaries are rebuilt only when data changes; search text is precomputed and displayed results are capped at 30. Item lists show 100 rows per page, and search opens the page containing the selected item. Container depth has no application limit, subject to browser memory and storage limits. Tree validation and marker ancestry checks use iterative traversal; very deep full path strings still require space proportional to their length. A room's tile summarizes items in all of its nested containers; its page lists directly stored items separately from child containers. Large inventories remain subject to browser rendering and localStorage limits.
-
-The 3D viewer uses Three.js, loaded only when a scan is opened. Room scanning needs no external scanning service or remote fonts. Optional account sync uses Firebase Authentication and Firestore.
+The 3D viewer uses Three.js, loaded only when a scan is opened. Room scanning needs no external scanning service or remote fonts. 3D scans from the webpage requires a device that supports OpenXR. 
 
 ## GitHub Pages
 
