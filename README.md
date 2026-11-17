@@ -52,9 +52,9 @@ The 3D viewer uses Three.js, loaded only when a scan is opened. Room scanning ne
 ## GitHub Pages
 
 The `Deploy Haven to GitHub Pages` workflow builds and deploys every push to `main`.
-The production build uses `/Item-finder/` as its asset base path.
+The production build uses `/Haven/` as its asset base path.
 In repository **Settings → Pages**, set **Source** to **GitHub Actions** once.
-The deployment URL is `https://undeadcommander.github.io/Item-finder/` after a successful Pages deployment.
+The deployment URL is `https://undeadcommander.github.io/Haven/` after a successful Pages deployment.
 Inventory saved on a local preview does not automatically transfer to this URL; export and restore a backup to move it.
 
 

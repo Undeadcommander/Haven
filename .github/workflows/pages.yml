@@ -49,7 +49,7 @@ jobs:
           fi
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
-      - run: npm run build -- --base=/Item-finder/
+      - run: npm run build -- --base=/Haven/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
