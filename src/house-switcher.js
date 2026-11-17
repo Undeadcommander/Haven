@@ -108,7 +108,7 @@ export function bindHouseSwitcher({ root, houses, activeHouseId, onSelect, onAdd
     panel.style.top = `${openAbove ? Math.max(gutter, bounds.top - panel.getBoundingClientRect().height - 8) : bounds.bottom + 8}px`;
   }
 
-  function outsideClick(event) {
+  function outsideInteraction(event) {
     if (!control.contains(event.target)) close();
   }
 
@@ -116,13 +116,14 @@ export function bindHouseSwitcher({ root, houses, activeHouseId, onSelect, onAdd
     open = false;
     panel.hidden = true;
     trigger.setAttribute("aria-expanded", "false");
-    document.removeEventListener("click", outsideClick, true);
+    document.removeEventListener("click", outsideInteraction, true);
+    document.removeEventListener("focusin", outsideInteraction, true);
     window.removeEventListener("resize", positionPanel);
     window.removeEventListener("scroll", positionPanel, true);
     if (restoreFocus && !disposed && trigger.isConnected) trigger.focus();
   }
 
-  function show() {
+  function show(focusSearch = true) {
     if (disposed || open) return;
     open = true;
     panel.hidden = false;
@@ -130,8 +131,12 @@ export function bindHouseSwitcher({ root, houses, activeHouseId, onSelect, onAdd
     search.value = "";
     filterHouses();
     positionPanel();
-    search.focus({ preventScroll: true });
-    document.addEventListener("click", outsideClick, true);
+    // Touch users can choose a house without opening the on-screen keyboard.
+    (focusSearch ? search : trigger).focus({ preventScroll: true });
+    document.addEventListener("click", outsideInteraction, true);
+    // A mobile keyboard dismissal can blur search with no new focus target.
+    // Close only when focus actually moves outside, or an outside click occurs.
+    document.addEventListener("focusin", outsideInteraction, true);
     window.addEventListener("resize", positionPanel);
     window.addEventListener("scroll", positionPanel, true);
   }
@@ -142,7 +147,11 @@ export function bindHouseSwitcher({ root, houses, activeHouseId, onSelect, onAdd
     if (!button || !control.contains(button)) return;
     if (button === trigger) {
       if (open) close();
-      else show();
+      else {
+        const touch = event.pointerType === "touch" ||
+          (!event.pointerType && event.detail > 0 && window.matchMedia("(pointer: coarse)").matches);
+        show(!touch);
+      }
     } else if (button.matches("[data-house-add]")) {
       close(true);
       addCallback?.();
@@ -188,17 +197,12 @@ export function bindHouseSwitcher({ root, houses, activeHouseId, onSelect, onAdd
     next?.focus();
   }
 
-  function focusout(event) {
-    if (open && !control.contains(event.relatedTarget)) close();
-  }
-
   function cleanup() {
     if (disposed) return;
     disposed = true;
     close();
     control.removeEventListener("click", click);
     control.removeEventListener("keydown", keydown);
-    control.removeEventListener("focusout", focusout);
     search.removeEventListener("input", filterHouses);
     selectCallback = null;
     addCallback = null;
@@ -211,7 +215,6 @@ export function bindHouseSwitcher({ root, houses, activeHouseId, onSelect, onAdd
   close();
   control.addEventListener("click", click);
   control.addEventListener("keydown", keydown);
-  control.addEventListener("focusout", focusout);
   search.addEventListener("input", filterHouses);
   bindings.set(control, cleanup);
   return cleanup;
