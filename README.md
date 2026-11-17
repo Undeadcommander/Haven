@@ -1,4 +1,4 @@
-# Haven · Item finder
+# Haven 
 
 A lightweight home inventory app. Start with a living room, garage, and bathroom, add rooms and nested containers, and record exactly where each item belongs. Search by item name, notes, or location; a result opens and highlights the item in its container.
 
