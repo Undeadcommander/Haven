@@ -1,3 +1,5 @@
+import { LAST_HOUSE_DELETE_MESSAGE } from "./houses.js";
+
 let nextSwitcherId = 0;
 const bindings = new WeakMap();
 
@@ -14,6 +16,7 @@ export function houseSwitcherMarkup({ houses, activeHouseId }) {
   const id = `haven-house-switcher-${++nextSwitcherId}`;
   const activeHouse = houses.find((house) => house.id === activeHouseId);
   const name = activeHouse ? String(activeHouse.name) : "Choose a house";
+  const lastHouse = houses.length === 1;
 
   return `<div class="house-switcher" data-house-switcher>
     <div class="house-switcher__controls">
@@ -30,11 +33,13 @@ export function houseSwitcherMarkup({ houses, activeHouseId }) {
       <p class="house-switcher__status" id="${id}-status" data-house-status role="status" aria-live="polite" aria-atomic="true">${houses.length ? `${houses.length} house${houses.length === 1 ? "" : "s"}` : "No houses yet. Use Add house to get started."}</p>
       <ul class="house-switcher__list" id="${id}-list" data-house-list aria-label="Houses">${houses.map((house, index) => `<li data-house-row><button class="house-switcher__option" type="button" data-house-option="${index}"${house.id === activeHouseId ? ' aria-current="true"' : ""} title="${escapeHtml(house.name)}"><span class="house-switcher__name">${escapeHtml(house.name)}</span><span class="house-switcher__check" aria-hidden="true">✓</span></button></li>`).join("")}</ul>
       <button class="house-switcher__rename" type="button" data-house-rename${activeHouse ? "" : " disabled"}>Rename house</button>
+      <button class="house-switcher__delete" type="button" data-house-delete${activeHouse && !lastHouse ? "" : " disabled"}${lastHouse ? ` aria-describedby="${id}-delete-help"` : ""}>Delete house</button>
+      ${lastHouse ? `<p class="house-switcher__status" id="${id}-delete-help" data-house-delete-help>${LAST_HOUSE_DELETE_MESSAGE}</p>` : ""}
     </div>
   </div>`;
 }
 
-export function bindHouseSwitcher({ root, houses, activeHouseId, onSelect, onAdd, onRename }) {
+export function bindHouseSwitcher({ root, houses, activeHouseId, onSelect, onAdd, onRename, onDelete }) {
   const control = root.matches?.("[data-house-switcher]")
     ? root
     : root.querySelector("[data-house-switcher]");
@@ -53,6 +58,7 @@ export function bindHouseSwitcher({ root, houses, activeHouseId, onSelect, onAdd
   let selectCallback = onSelect;
   let addCallback = onAdd;
   let renameCallback = onRename;
+  let deleteCallback = onDelete;
   let disposed = false;
   let open = false;
 
@@ -143,6 +149,9 @@ export function bindHouseSwitcher({ root, houses, activeHouseId, onSelect, onAdd
     } else if (button.matches("[data-house-rename]")) {
       close(true);
       renameCallback?.();
+    } else if (button.matches("[data-house-delete]")) {
+      close(true);
+      deleteCallback?.();
     } else if (button.matches("[data-house-option]")) {
       const house = records[Number(button.dataset.houseOption)];
       if (!house || button.closest("[data-house-row]").hidden) return;
@@ -194,6 +203,7 @@ export function bindHouseSwitcher({ root, houses, activeHouseId, onSelect, onAdd
     selectCallback = null;
     addCallback = null;
     renameCallback = null;
+    deleteCallback = null;
     if (bindings.get(control) === cleanup) bindings.delete(control);
   }
 

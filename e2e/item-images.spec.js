@@ -1,7 +1,10 @@
 import { test, expect } from "./fixture.js";
 import { readFile } from "node:fs/promises";
 
-const save = (page) => page.getByRole("button", { name: "Save", exact: true }).click();
+const save = async (page) => {
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.locator("#editor")).toBeHidden();
+};
 const settings = (page) => page.getByRole("button", { name: "Settings for Spare keys", exact: true }).click();
 const saved = (page) => page.evaluate(() => JSON.parse(localStorage.getItem("haven-inventory")));
 const photo = { name: "keys.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=", "base64") };

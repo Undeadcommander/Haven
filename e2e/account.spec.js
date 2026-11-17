@@ -118,6 +118,8 @@ test("Google account flow keeps guest data separate and copies it only on reques
   await page
     .getByRole("button", { name: "Copy device inventory to account" })
     .click();
+  await expect.poll(() => page.evaluate(() =>
+    JSON.parse(localStorage.getItem("haven-account:test-alice"))?.inventory.items[0]?.name)).toBe("Guest keys");
   await expect(page.locator("[data-save-status]")).toContainText(
     "Account is up to date",
   );

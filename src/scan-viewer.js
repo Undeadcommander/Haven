@@ -58,8 +58,9 @@ export async function openScanViewer(locationId, api) {
     status.textContent = message;
     status.classList.toggle("scan-error", error);
   };
-  const persist = (next) => {
-    if (closed || stale) return false;
+  let persisting = false;
+  const persist = async (next, { isCurrent = () => true } = {}) => {
+    if (closed || stale || persisting) return false;
     if ((api.getScope?.() || null) !== openScope) {
       tell(
         "The account changed. Reopen this scan in the current account.",
@@ -71,13 +72,21 @@ export async function openScanViewer(locationId, api) {
       tell("The marker has invalid coordinates. Choose another point.", true);
       return false;
     }
-    const saved = api.save(next);
-    if (!saved)
-      tell(
-        "Could not save this change. Browser storage may be full or unavailable.",
-        true,
-      );
-    return saved;
+    const previous = api.getState(), expected = displayedScan;
+    persisting = true;
+    try {
+      const saved = await api.save(next, { isCurrent: () => !closed && !stale &&
+        (api.getScope?.() || null) === openScope && api.getState() === previous &&
+        sameScan(expected, scan()) && isCurrent() });
+      if (!saved && !closed)
+        tell("Could not save this change. Browser storage may be full or unavailable.", true);
+      return Boolean(saved);
+    } catch (error) {
+      if (!closed) tell(error.message || "Could not save this change. Please try again.", true);
+      return false;
+    } finally {
+      persisting = false;
+    }
   };
   const deleteUnusedAsset = (id) => {
     // The account owns cleanup, including unsynced and recovery inventories.
@@ -330,10 +339,10 @@ export async function openScanViewer(locationId, api) {
         m.kind === "item" ? target.id : null,
       );
     };
-    panel.querySelector("[data-unpin]").onclick = () => {
+    panel.querySelector("[data-unpin]").onclick = async () => {
       if (!ensureCurrentScan()) return;
       const s = api.getState();
-      if (persist({ ...s, markers: s.markers.filter((x) => x.id !== id) }))
+      if (await persist({ ...s, markers: s.markers.filter((x) => x.id !== id) }) && !closed && !stale)
         refreshMarkers();
     };
   }
@@ -427,7 +436,7 @@ export async function openScanViewer(locationId, api) {
     toggle();
     mode.onchange = toggle;
     panel.querySelector("[data-back-markers]").onclick = listMarkers;
-    form.onsubmit = (e) => {
+    form.onsubmit = async (e) => {
       e.preventDefault();
       if (!ensureCurrentScan(placementScan)) return;
       if (!validPosition(position)) {
@@ -505,7 +514,8 @@ export async function openScanViewer(locationId, api) {
         ),
         marker,
       ];
-      if (persist(next)) {
+      if (await persist(next, { isCurrent: () => form.isConnected && panel.contains(form) }) &&
+          !closed && !stale && form.isConnected) {
         refreshMarkers();
         showDetails(marker.id);
         tell("Marker saved. Click its dot to see the details.");
@@ -542,10 +552,16 @@ export async function openScanViewer(locationId, api) {
         ],
         markers: (s.markers || []).filter((m) => m.scanId !== previous?.id),
       };
-      if (!persist(next))
+      if (!await persist(next))
         throw Error(
           "Scan metadata could not be saved. The previous scan is unchanged.",
         );
+      if (closed || stale || (api.getScope?.() || null) !== openScope) {
+        disposeObject(object);
+        object = null;
+        await commitAssets([assetId], openScope).catch(() => {});
+        return;
+      }
       showObject(object, entry);
       object = null;
       await commitAssets([assetId], openScope).catch(() => {});
@@ -596,7 +612,7 @@ export async function openScanViewer(locationId, api) {
     );
   };
   dialog.querySelector("[data-reset-camera]").onclick = fit;
-  dialog.querySelector("[data-remove-scan]").onclick = () => {
+  dialog.querySelector("[data-remove-scan]").onclick = async () => {
     if (!ensureCurrentScan()) return;
     const previous = scan();
     if (
@@ -608,7 +624,7 @@ export async function openScanViewer(locationId, api) {
       return;
     const s = api.getState();
     if (
-      persist({
+      await persist({
         ...s,
         scans: s.scans.filter((x) => x.id !== previous.id),
         markers: (s.markers || []).filter((m) => m.scanId !== previous.id),

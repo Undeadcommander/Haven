@@ -367,6 +367,7 @@ test("depth failures explain recovery and keep the existing scan and its markers
   await place(page, "item");
   await page.getByRole("textbox", { name: "Item name", exact: true }).fill("Keep these keys");
   await page.getByRole("button", { name: "Save marker" }).click();
+  await expect(page.getByRole("button", { name: "Item marker: Keep these keys", exact: true })).toBeVisible();
   const inventory = await page.evaluate(() => localStorage.getItem("haven-inventory"));
   for (const [name, message] of [
     ["InvalidStateError", "Keep the browser in the foreground"],

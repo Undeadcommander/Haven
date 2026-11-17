@@ -62,7 +62,8 @@ export async function action(page, action, argument) {
   return page.evaluate(async ({ action, argument }) => {
     const start = performance.now();
     const editor = () => document.querySelector('#editor');
-    const change = (selector, value) => { const el = editor().querySelector(selector); el.value = value; el.dispatchEvent(new Event('change', { bubbles: true })); };
+    let submittedForm;
+    const change = (selector, value) => { const el = editor().querySelector(selector); if (el.matches('[data-delete-record]')) el.focus(); el.value = value; el.dispatchEvent(new Event('change', { bubbles: true })); };
     if (action === 'gear') document.querySelector('[data-location-settings="source"]').click();
     if (action === 'open') editor().querySelector('.editor-delete').click();
     if (action === 'separate' || action === 'together') change('[name="move-layout"]', action);
@@ -77,9 +78,12 @@ export async function action(page, action, argument) {
       }
       change('[name="item-destination-1"]', 'target');
     }
-    if (action === 'submit') editor().querySelector('form').requestSubmit();
+    if (action === 'submit') { submittedForm = editor().querySelector('form'); submittedForm.requestSubmit(); }
     if (action === 'cancel') editor().querySelector('.modal-actions [data-cancel]').click();
     const syncMs = performance.now() - start;
+    while (submittedForm && editor().open && editor().querySelector('form') === submittedForm &&
+      submittedForm.querySelector('[type=submit]')?.disabled && performance.now() - start < 10_000)
+      await new Promise(resolve => setTimeout(resolve, 0));
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     return { syncMs, paintedMs: performance.now() - start };
   }, { action, argument });

@@ -305,9 +305,11 @@ test("house submit immediately opens another form before old dialog close events
   await page.goto("/");
   await page.locator("[data-house-add]").click();
   await page.getByRole("textbox", { name: "House name" }).fill("Same task house");
-  const result = await page.evaluate(() => {
+  const result = await page.evaluate(async () => {
     const previous = document.querySelector("#editor");
-    previous.querySelector("form").requestSubmit();
+    // Wait for the write lock and save, then open the next form in the same
+    // continuation before the previous dialog's native close event is delivered.
+    await previous.querySelector("form").onsubmit(new Event("submit", { cancelable: true }));
     document.querySelector("[data-add-root]").click();
     const current = document.querySelector("#editor");
     return { replaced: previous !== current, previousConnected: previous.isConnected,

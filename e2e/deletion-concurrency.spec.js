@@ -74,11 +74,17 @@ async function addRoom(page,name) {
   await page.locator('.heading-actions [data-add-root]').click();
   await page.locator('#editor [name=name]').fill(name);
   await page.locator('#editor [type=submit]').click();
+  await expect(page.locator('#editor')).toBeHidden();
+}
+async function submitEditor(page) {
+  await page.locator('#editor [type=submit]').click();
+  await expect.poll(() => page.locator('#editor').evaluate(dialog =>
+    !dialog.open || !dialog.querySelector('[type=submit]')?.disabled)).toBe(true);
 }
 
 for (const account of [false,true]) {
   const mode = account ? 'account' : 'guest';
-  for (const operation of ['room-delete','container-move-delete','item-delete','ordinary-edit']) {
+  for (const operation of ['room-delete','container-move-delete','item-delete','house-delete','house-move-delete','ordinary-edit']) {
     test(`${mode}: delayed storage event, ${operation} must preserve immediately preceding sibling save`,async ({browser,baseURL}) => {
       const {context,first,second,read,blocked} = await tabs(browser,baseURL,account);
       try {
@@ -93,6 +99,14 @@ for (const account of [false,true]) {
           await second.getByRole('button',{name:'Open Living room',exact:true}).click();
           await gearDelete(second,'Keys','item');
         }
+        if (operation === 'house-delete' || operation === 'house-move-delete') {
+          await second.locator('[data-house-toggle]').click();
+          await second.getByRole('button',{name:'Delete house',exact:true}).click();
+          if (operation === 'house-delete') {
+            await second.locator('#editor').getByRole('radio',{name:/Delete everything/}).check();
+            await second.locator('#editor').getByRole('button',{name:'Continue',exact:true}).click();
+          } else await second.locator('#editor [name=destination]').selectOption('lake');
+        }
         if (operation === 'ordinary-edit') {
           await second.getByRole('button',{name:'Settings for Garage',exact:true}).click();
           await second.locator('#editor [name=name]').fill('Edited garage');
@@ -100,9 +114,10 @@ for (const account of [false,true]) {
         await addRoom(first,'Sibling saved room');
         expect((await read(first)).locations.map(l => l.name)).toContain('Sibling saved room');
         await expect.poll(() => second.evaluate(() => window.__auditQueued)).toBeGreaterThan(0);
-        await second.locator('#editor [type=submit]').click();
+        await submitEditor(second);
         const after = await read(second);
         expect(after.locations.map(l => l.name)).toContain('Sibling saved room');
+        if (operation.startsWith('house-')) expect(after.houses.map(house => house.id)).toContain('my-home');
         if (account) {
           await expect(second.locator('#editor [data-settings-error]')).toBeVisible();
           expect(await second.evaluate(() => window.__auditAccount.sync.status)).toBe('stale');
@@ -138,7 +153,7 @@ test('guest: stale deletion overwrites a sibling save in an inactive house',asyn
     await addRoom(first,'New lake room');
     expect((await read(first)).locations.map(l => l.name)).toContain('New lake room');
     await expect.poll(() => second.evaluate(() => window.__auditQueued)).toBeGreaterThan(0);
-    await second.locator('#editor [type=submit]').click();
+    await submitEditor(second);
     expect((await read(second)).locations.map(l => l.name)).toContain('New lake room');
   } finally { await context.close(); }
 });
@@ -172,19 +187,19 @@ for (const account of [false,true]) {
           await first.getByRole('button',{name:'Open Living room',exact:true}).click();
           await first.getByRole('button',{name:'Settings for Keys',exact:true}).click();
           await first.locator('#editor [name=location]').selectOption('garage');
-          await first.locator('#editor [type=submit]').click();
+          await submitEditor(first);
           expect((await read(first)).items.find(item => item.id === 'keys')?.locationId).toBe('garage');
         } else {
           await second.getByRole('button',{name:'Settings for Garage',exact:true}).click();
           await second.locator('#editor [name=name]').fill('Stale edit');
           await first.getByRole('button',{name:'Open Living room',exact:true}).click();
           await gearDelete(first,'Keys','item');
-          await first.locator('#editor [type=submit]').click();
+          await submitEditor(first);
           expect((await read(first)).items.some(item => item.id === 'keys')).toBe(false);
         }
         await expect.poll(() => second.evaluate(() => window.__auditQueued)).toBeGreaterThan(0);
         // No artificial time gap between the acknowledged sibling operation and submit.
-        await second.locator('#editor [type=submit]').click();
+        await submitEditor(second);
         const after = await read(second);
         if (race === 'move-before-final-delete') {
           expect(after.items.find(item => item.id === 'keys')?.locationId).toBe('garage');

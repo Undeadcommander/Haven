@@ -1,5 +1,6 @@
 import config from "./firebase-config.json";
 import { AccountSync, accountKey, mergeGuestInventory } from "./account-sync.js";
+import { withInventoryWriteLock } from "./inventory-write-lock.js";
 import { openAccountDeletion } from "./account-deletion.js";
 import { deletionKey } from "./delete-account-data.js";
 import { initialState, validState } from "./store.js";
@@ -253,17 +254,27 @@ export function setupAccount(api) {
             throw Error("The account changed. Please try again.");
           if (sync.record.inventory !== base)
             throw Error("Your inventory changed during the copy. Please try again.");
-          sync.saveLocal(merged.inventory);
-          committed = true;
+          await sync.saveLocal(merged.inventory, {
+            isCurrent: () => user?.uid === uid && authEpoch === epoch && sync.record.inventory === base,
+            onCommitted: () => {
+              committed = true;
+              if (user?.uid === uid && authEpoch === epoch)
+                api.replace(merged.inventory, { houseId: merged.houseId });
+            },
+          });
+          if (user?.uid !== uid || authEpoch !== epoch) {
+            if (staged.commit) await staged.commit().catch(() => {});
+            return;
+          }
           // Publish the saved view before asynchronous lease cleanup. Session
           // changes or newer edits during cleanup must keep their own view.
-          api.replace(merged.inventory, { houseId: merged.houseId });
           if (staged.commit) await staged.commit().catch(() => {});
           if (user?.uid !== uid || authEpoch !== epoch) return;
           problem = "";
           update();
         } catch (error) {
           let message = error.message;
+          if (staged && committed && staged.commit) await staged.commit().catch(() => {});
           if (staged && !committed) {
             try { await staged.rollback(); }
             catch { message += " Copied files could not be cleaned up; browser storage is unavailable."; }
@@ -392,26 +403,31 @@ export function setupAccount(api) {
     },
     initialize,
     cleanupAssets: scheduleAssetCleanup,
-    save(inventory, { replaceUnreadable = false } = {}) {
-      if (sync.status === "deleting")
-        throw Error("Account deletion is unfinished. Open Account → Delete account to finish.");
-      if (!ready)
-        throw Error(
-          "Your account is still loading. Please try again in a moment.",
-        );
-      if (!user && api.storageIssue?.() && !replaceUnreadable)
-        throw Error("Editing is paused to protect unreadable saved data. Export raw recovery data, reload, or explicitly restore a backup first.");
-      if (user) sync.saveLocal(inventory);
+    async save(inventory, { replaceUnreadable = false, isCurrent = () => true, onCommitted = () => {} } = {}) {
+      const uid = user?.uid || null, epoch = authEpoch;
+      const requireCurrent = () => {
+        if (authEpoch !== epoch || (user?.uid || null) !== uid || !isCurrent())
+          throw new DOMException("The account, inventory, or view changed before this save finished.", "AbortError");
+        if (sync.status === "deleting")
+          throw Error("Account deletion is unfinished. Open Account → Delete account to finish.");
+        if (!ready) throw Error("Your account is still loading. Please try again in a moment.");
+        if (!user && api.storageIssue?.() && !replaceUnreadable)
+          throw Error("Editing is paused to protect unreadable saved data. Export raw recovery data, reload, or explicitly restore a backup first.");
+      };
+      requireCurrent();
+      if (user) await sync.saveLocal(inventory, { isCurrent: () => { requireCurrent(); return true; }, onCommitted });
       else {
         const value = JSON.stringify(inventory);
-        // Storage events may be queued while this tab still shows an older
-        // inventory. Check the persisted snapshot at the write boundary too.
-        if (localStorage.getItem("haven-inventory") !== guestValue)
-          throw Error("This device inventory changed in another tab. Reload this tab before editing further.");
-        localStorage.setItem("haven-inventory", value);
-        guestValue = value;
+        await withInventoryWriteLock("haven-inventory", () => {
+          requireCurrent();
+          if (localStorage.getItem("haven-inventory") !== guestValue)
+            throw Error("This device inventory changed in another tab. Reload this tab before editing further.");
+          localStorage.setItem("haven-inventory", value);
+          guestValue = value;
+          onCommitted();
+        });
       }
-      scheduleAssetCleanup();
+      if (authEpoch === epoch && (user?.uid || null) === uid) scheduleAssetCleanup();
     },
     externalChange(key, change) {
       if (user && key === null) {

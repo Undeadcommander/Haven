@@ -28,6 +28,7 @@
 .house-switcher__trigger,
 .house-switcher__add,
 .house-switcher__rename,
+.house-switcher__delete,
 .house-switcher__option {
   display: flex;
   align-items: center;
@@ -160,7 +161,8 @@
   font-size: 13px;
 }
 
-.house-switcher__rename {
+.house-switcher__rename,
+.house-switcher__delete {
   flex-shrink: 0;
   justify-content: center;
   margin-top: 9px;
@@ -182,6 +184,11 @@
 
 .house-switcher button:hover {
   background: var(--hover, #e3e9dd);
+}
+
+.house-switcher button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .house-switcher button:focus-visible,

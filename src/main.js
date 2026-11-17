@@ -7,7 +7,7 @@ import { setupInventoryDrag } from "./inventory-drag.js";
 import { setupAccount } from "./account.js";
 import { houseSwitcherMarkup, bindHouseSwitcher } from "./house-switcher.js";
 import "./house-switcher.css";
-import { addHouse, renameHouse, withHouses, inventoryForHouse, replaceHouseInventory, MAX_HOUSE_NAME_LENGTH } from "./houses.js";
+import { addHouse, renameHouse, removeHouse, withHouses, inventoryForHouse, replaceHouseInventory, MAX_HOUSE_NAME_LENGTH, LAST_HOUSE_DELETE_MESSAGE } from "./houses.js";
 import { pruneScanLinks, transferItem, transferContainer } from "./scan-data.js";
 import { removeItem, removeLocation } from "./inventory-delete.js";
 import { createDeletionMoves } from "./deletion-moves.js";
@@ -104,14 +104,34 @@ const account = setupAccount({
     inventoryChanges.dispatchEvent(new Event("replace"));
   },
 });
-function save(next) {
-  return saveInventory(replaceHouseInventory(inventory, activeHouseId, pruneScanLinks(next)));
+function save(next, options = {}) {
+  return saveInventory(replaceHouseInventory(inventory, activeHouseId, pruneScanLinks(next)), options);
 }
-function saveInventory(next, options = {}) {
+async function saveInventory(next, options = {}) {
+  const version = inventoryEpoch, owner = account.authEpoch, scope = getAssetScope();
+  const editor = document.querySelector("#editor");
+  const ownsEditor = editor?.open ? editorOwner(editor) : () => true;
+  const isCurrent = () => inventoryEpoch === version && account.authEpoch === owner &&
+    getAssetScope() === scope && ownsEditor() && (options.isCurrent?.() ?? true);
   next = pruneScanLinks(withHouses(next));
+  let committed = false;
+  const onCommitted = () => {
+    committed = true;
+    if (account.authEpoch !== owner || getAssetScope() !== scope) return;
+    inventoryEpoch++;
+    inventory = next;
+    if (!inventory.houses.some((house) => house.id === activeHouseId))
+      activeHouseId = preferredHouse(inventory.houses);
+    state = inventoryForHouse(inventory, activeHouseId);
+    index = createIndex(state);
+  };
   try {
-    account.save(next, options);
+    await account.save(next, { ...options, isCurrent, onCommitted });
   } catch (error) {
+    // localStorage is already durable if the mutex's IndexedDB transaction
+    // later aborts. Cancellation cannot undo that write or roll back its files.
+    if (committed) return true;
+    if (error.name === "AbortError") throw error;
     toast(
       error.message ||
         "Could not save. Browser storage may be full or unavailable. Export a backup.",
@@ -119,13 +139,7 @@ function saveInventory(next, options = {}) {
     );
     return false;
   }
-  inventoryEpoch++;
-  inventory = next;
-  if (!inventory.houses.some((house) => house.id === activeHouseId))
-    activeHouseId = preferredHouse(inventory.houses);
-  state = inventoryForHouse(inventory, activeHouseId);
-  index = createIndex(state);
-  return true;
+  return committed;
 }
 function rememberHouse() {
   try {
@@ -166,14 +180,15 @@ function editHouse(houseId = null) {
     house ? "Choose a new name. All rooms, containers, items, and scans stay in this house."
       : "Keep each house’s rooms, containers, items, and scans in its own space. Switch houses anytime from the header.",
     `<label>House name<input name="name" required maxlength="${MAX_HOUSE_NAME_LENGTH}" placeholder="e.g. Lake house" value="${esc(house?.name || "")}" autocomplete="off"></label><p class="warning" data-settings-error role="alert" hidden></p>`,
-    (data, dialog) => {
+    async (data, dialog, ownsEditor) => {
       try {
         const id = house ? house.id : crypto.randomUUID();
         const next = house ? renameHouse(inventory, id, data.get("name")) : addHouse(inventory, data.get("name"), id);
-        if (!saveInventory(next)) {
+        if (!await saveInventory(next)) {
           showSettingsError(dialog, "Could not save this house. Please try again.");
           return;
         }
+        if (!ownsEditor()) return;
         dialog.close();
         if (house) {
           render();
@@ -183,11 +198,14 @@ function editHouse(houseId = null) {
         }
         if (selectHouse(id)) toast("Your new house is ready. Add a room to get started.");
       } catch (error) {
-        showSettingsError(dialog, error.message);
+        showSettingsError(dialog, error);
       }
     },
     house ? "Save" : "Add house",
   );
+  if (house) addDeleteOption("house", () => deleteHouse(house.id), {
+    disabledReason: inventory.houses.length < 2 ? LAST_HOUSE_DELETE_MESSAGE : "",
+  });
 }
 function navigate(id = null, itemId = null) {
   current = id;
@@ -269,6 +287,7 @@ function bind() {
   unbindHouseSwitcher = bindHouseSwitcher({
     root, houses: inventory.houses, activeHouseId, onSelect: selectHouse,
     onAdd: () => editHouse(), onRename: () => editHouse(activeHouseId),
+    onDelete: () => deleteHouse(activeHouseId),
   });
   account.bind();
   root.querySelectorAll("[data-item-page]").forEach((button) => {
@@ -409,28 +428,71 @@ function clearClosedEditor(event) {
     // its destination options and photo controls are released as well.
     dialog.querySelectorAll("form").forEach((form) => {
       form.onsubmit = null;
+      form.querySelectorAll("select").forEach((select) => select.replaceChildren());
       form.replaceChildren();
     });
     dialog.replaceChildren();
   }
 }
+function editorOwner(dialog) {
+  const form = dialog.querySelector("form");
+  return () => dialog.isConnected && dialog.open && dialog.querySelector("form") === form;
+}
+function releaseEditorChoices(dialog) {
+  dialog.querySelectorAll("select").forEach((select) => {
+    select.onfocus = select.onblur = select.onpointerdown = select.onchange = null;
+    select.replaceChildren();
+  });
+}
 function modal(title, description, fields, onSubmit, label = "Save", { destructive = false } = {}) {
   const d = document.querySelector("#editor");
+  const openedVersion = inventoryEpoch;
+  // Native select bookkeeping can retain a closed form's option descendants.
+  // Empty choices before native close, including auth and house-switch closes.
+  const nativeClose = HTMLDialogElement.prototype.close;
+  d.close = (...args) => { releaseEditorChoices(d); nativeClose.apply(d, args); };
   d.classList.toggle("delete-dialog", destructive);
   d.setAttribute("aria-labelledby", "editor-title");
   d.setAttribute("aria-describedby", "editor-description");
   d.querySelectorAll("form").forEach((form) => {
     form.onsubmit = null;
+    form.querySelectorAll("select").forEach((select) => select.replaceChildren());
     form.replaceChildren();
   });
   const content = `<p class="modal-description" id="editor-description">${description}</p>${fields}`;
   d.innerHTML = `<form><div class="modal-heading"><div><span class="eyebrow">${destructive ? "DELETE SPACE OR ITEM" : "MAKE ROOM"}</span><h2 id="editor-title">${title}</h2></div><button type="button" class="icon-button" data-cancel aria-label="Close dialog">${icon("close")}</button></div>${destructive ? `<div class="delete-content">${content}</div>` : content}<div class="modal-actions"><button type="button" class="${destructive ? "primary" : "secondary"}" data-cancel ${destructive ? "autofocus" : ""}>Cancel</button><button type="submit" class="${destructive ? "secondary destructive-action" : "primary"}">${label}</button></div></form>`;
-  d.querySelectorAll("[data-cancel]").forEach(
-    (b) => (b.onclick = () => d.close()),
-  );
-  d.querySelector("form").onsubmit = (e) => {
+  const cancel = () => {
+    d.close();
+    if (inventoryEpoch !== openedVersion) route();
+  };
+  d.querySelectorAll("[data-cancel]").forEach((button) => { button.onclick = cancel; });
+  d.oncancel = (event) => {
+    releaseEditorChoices(d);
+    queueMicrotask(() => {
+      if (!event.defaultPrevented && !d.open && inventoryEpoch !== openedVersion) route();
+    });
+  };
+  const form = d.querySelector("form"), ownsEditor = editorOwner(d);
+  let submitting = false;
+  form.onsubmit = async (e) => {
     e.preventDefault();
-    onSubmit(new FormData(e.target), d);
+    if (submitting || !ownsEditor()) return;
+    submitting = true;
+    const data = new FormData(form);
+    const controls = [...form.querySelectorAll('input, select, textarea, button[type="submit"]')]
+      .map((control) => [control, control.disabled]);
+    controls.forEach(([control]) => { control.disabled = true; });
+    try {
+      await onSubmit(data, d, ownsEditor);
+    } catch (error) {
+      if (ownsEditor() && error.name !== "AbortError") {
+        if (form.querySelector("[data-settings-error]")) showSettingsError(d, error);
+        else toast(error.message || "Could not save. Please try again.", true);
+      }
+    } finally {
+      submitting = false;
+      if (ownsEditor()) controls.forEach(([control, disabled]) => { control.disabled = disabled; });
+    }
   };
   // Closed forms can retain parsed backups and decoded photo editor images
   // through their handlers until the next navigation or modal is opened.
@@ -446,17 +508,28 @@ function destinationOptions(selected, excluded = new Set()) {
     .map((l) => `<option value="${esc(l.id)}" ${l.id === selected ? "selected" : ""}>${esc(l.path)}${l.id === selected ? " (current)" : ""}</option>`).join("");
 }
 function showSettingsError(dialog, message) {
+  if (message?.name === "AbortError" || !dialog.open) return;
   const error = dialog.querySelector("[data-settings-error]");
-  error.textContent = message;
+  if (!error) return;
+  error.textContent = message?.message || message;
   error.hidden = false;
   if (dialog.classList.contains("delete-dialog")) error.scrollIntoView({ block: "nearest" });
 }
-function addDeleteOption(kind, onDelete) {
+function addDeleteOption(kind, onDelete, { disabledReason = "" } = {}) {
   const dialog = document.querySelector("#editor");
   const button = document.createElement("button");
   button.type = "button";
   button.className = "secondary editor-delete";
   button.innerHTML = `${icon("trash")} Delete ${kind}`;
+  if (disabledReason) {
+    button.disabled = true;
+    button.setAttribute("aria-describedby", "editor-delete-help");
+    const help = document.createElement("p");
+    help.id = "editor-delete-help";
+    help.className = "modal-description";
+    help.textContent = disabledReason;
+    dialog.querySelector(".modal-actions").before(help);
+  }
   button.onclick = () => {
     dialog.close();
     onDelete();
@@ -498,17 +571,18 @@ function importExisting(kind, destination) {
       : `<p class="modal-description">No ${isContainer ? "containers" : "items"} are available to import into this location. ${isContainer ? "Rooms, this container, its ancestors, and containers already directly here cannot be imported." : "Items already here are not listed."}</p>`}
       <button type="button" class="text-button" data-create-new>Create a new ${kind}</button>
       <p class="warning" data-settings-error role="alert" hidden></p>`,
-    (data, dialog) => {
+    async (data, dialog, ownsEditor) => {
       try {
         const next = isContainer
           ? transferContainer(state, data.get("source"), destination)
           : transferItem(state, data.get("source"), destination);
-        if (!save(next)) throw Error(`Could not save this move. Your ${kind} has not moved. Please try again.`);
+        if (!await save(next)) throw Error(`Could not save this move. Your ${kind} has not moved. Please try again.`);
+        if (!ownsEditor()) return;
         dialog.close();
         render();
         toast(`${isContainer ? "Container" : "Item"} moved to ${index.path(destination)}.`);
       } catch (error) {
-        showSettingsError(dialog, error.message);
+        showSettingsError(dialog, error);
       }
     },
     `Move ${kind} here`,
@@ -538,7 +612,7 @@ function editLocation(l, parent) {
       ? "Give this part of your home a name."
       : l ? "Update this container or choose a new destination." : "Create a home for the things inside this space.",
     `<label>Name<input name="name" required maxlength="100" placeholder="${isRoom ? "e.g. Living room" : "e.g. Top drawer"}" value="${esc(l?.name || "")}"></label><label>Description <span>optional</span><textarea name="description" maxlength="500" placeholder="What makes this space yours?">${esc(l?.description || "")}</textarea></label>${colorFields(l?.color)}${imageFields(isRoom)}${l && !isRoom ? `<label>Destination<select name="parent">${destinationOptions(l.parentId, descendants(index, l.id))}</select></label><p class="modal-description">Changing destination moves everything inside. Pins showing the old position in other scans will be cleared.</p>` : ""}<p class="warning" data-settings-error role="alert" hidden></p>`,
-    (data, d) => {
+    async (data, d, ownsEditor) => {
       const name = data.get("name").trim();
       if (!name) return;
       let next = state, image;
@@ -546,7 +620,7 @@ function editLocation(l, parent) {
         image = getImage();
         if (l && !isRoom) next = transferContainer(state, l.id, data.get("parent"));
       } catch (error) {
-        showSettingsError(d, error.message);
+        showSettingsError(d, error);
         return;
       }
       const entry = {
@@ -558,13 +632,14 @@ function editLocation(l, parent) {
         color: d.querySelector('input[name="color"]:checked')?.value || "sage",
       };
       if (
-        save({
+        await save({
           ...next,
           locations: l
             ? next.locations.map((x) => (x.id === l.id ? entry : x))
             : [...next.locations, entry],
         })
       ) {
+        if (!ownsEditor()) return;
         d.close();
         render();
         toast(l ? "Space updated" : "A new space, ready for your things");
@@ -584,7 +659,7 @@ function editItem(item) {
     item ? "Edit item" : "Add an item",
     "A little detail now makes it easy to find later.",
     `<label>Item name<input name="name" required maxlength="150" placeholder="e.g. Spare keys" value="${esc(item?.name || "")}"></label><label>Description <span>optional · Where exactly?</span><textarea name="notes" maxlength="1000" placeholder="e.g. In the small blue box, behind the books">${esc(item?.notes || "")}</textarea></label><label>Location<select name="location">${state.locations.map((l) => `<option value="${esc(l.id)}" ${l.id === (item?.locationId || current) ? "selected" : ""}>${esc(index.path(l.id))}</option>`).join("")}</select></label>${colorFields(item?.color)}${imageFields("item")}<p class="warning" data-settings-error role="alert" hidden></p>`,
-    (data, d) => {
+    async (data, d, ownsEditor) => {
       const name = data.get("name").trim();
       if (!name) return;
       const entry = {
@@ -599,17 +674,18 @@ function editItem(item) {
         entry.image = getImage();
         next = item ? transferItem(state, item.id, entry.locationId) : state;
       } catch (error) {
-        showSettingsError(d, error.message);
+        showSettingsError(d, error);
         return;
       }
       if (
-        save({
+        await save({
           ...next,
           items: item
             ? state.items.map((i) => (i.id === item.id ? entry : i))
             : [...state.items, entry],
         })
       ) {
+        if (!ownsEditor()) return;
         d.close();
         const visibleItems = view === "items" ? state.items : index.items.get(current) || [];
         const savedOffset = visibleItems.findIndex((saved) => saved.id === entry.id);
@@ -632,12 +708,12 @@ function confirmDelete(title, description, fn, label = "Delete") {
     title,
     description,
     '<p class="warning" data-settings-error role="alert" hidden></p>',
-    (_, d) => {
+    async (_, d) => {
       try {
         if (inventoryEpoch !== version) throw Error("Your inventory changed. Cancel and start again to review the latest contents.");
-        fn(d);
+        await fn(d);
       } catch (error) {
-        showSettingsError(d, error.message);
+        showSettingsError(d, error);
       }
     },
     label,
@@ -650,8 +726,10 @@ function deleteItem(id) {
   confirmDelete(
     `Delete ${esc(item.name)}?`,
     "This item and its scan pins will be removed from your inventory. This cannot be undone.",
-    (dialog) => {
-      if (!save(removeItem(state, id))) throw Error("Could not save this deletion. Your item has not been deleted. Please try again.");
+    async (dialog) => {
+      const ownsEditor = editorOwner(dialog);
+      if (!await save(removeItem(state, id))) throw Error("Could not save this deletion. Your item has not been deleted. Please try again.");
+      if (!ownsEditor()) return;
       dialog.close();
       render();
       toast(`${item.name} deleted.`);
@@ -659,11 +737,13 @@ function deleteItem(id) {
     "Delete item",
   );
 }
-function finishLocationDeletion(id, options, dialog) {
+async function finishLocationDeletion(id, options, dialog) {
+  const ownsEditor = editorOwner(dialog);
   const location = index.byId.get(id);
   const keptContents = options.mode === "move" && (index.children.get(id)?.length || index.items.get(id)?.length);
   const next = removeLocation(state, id, options);
-  if (!save(next)) throw Error("Could not save this deletion. Nothing has been moved or deleted. Please try again.");
+  if (!await save(next)) throw Error("Could not save this deletion. Nothing has been moved or deleted. Please try again.");
+  if (!ownsEditor()) return;
   dialog.close();
   if (current && !index.byId.has(current)) navigate(location.parentId);
   else render();
@@ -672,7 +752,6 @@ function finishLocationDeletion(id, options, dialog) {
 function deleteLocation(id) {
   const location = index.byId.get(id);
   if (!location) return;
-  const version = inventoryEpoch;
   const ids = descendants(index, id);
   const containers = state.locations.filter((entry) => entry.id !== id && ids.has(entry.id));
   const items = state.items.filter((item) => ids.has(item.locationId));
@@ -686,35 +765,105 @@ function deleteLocation(id) {
   const destinations = destinationOptions(null, ids);
   const moves = createDeletionMoves({ rootId: id, containers, items, index, esc, destinations });
   const summary = `${containers.length} container${containers.length === 1 ? "" : "s"} and ${items.length} item${items.length === 1 ? "" : "s"}`;
+  chooseSpaceDeletion({ name: location.name, kind, summary, destinations, moves, scanNote,
+    finish: (options, dialog) => finishLocationDeletion(id, options, dialog) });
+}
+async function finishHouseDeletion(id, options, dialog) {
+  const ownsEditor = editorOwner(dialog);
+  const house = inventory.houses.find((entry) => entry.id === id);
+  const keptContents = options.mode === "move" && inventoryForHouse(inventory, id).locations.length;
+  const next = removeHouse(inventory, id, options);
+  if (!await saveInventory(next)) throw Error("Could not save this deletion. Nothing has been moved or deleted. Please try again.");
+  if (!ownsEditor()) return;
+  dialog.close();
+  const destination = options.destinationHouseId || options.roomDestinations?.values().next().value;
+  if (options.mode === "move" && destination) activateHouse(destination);
+  rememberHouse();
+  inventoryChanges.dispatchEvent(new Event("replace"));
+  history.replaceState(historyEntry(), "", "#");
+  navigate();
+  root.querySelector("[data-house-toggle]")?.focus();
+  toast(`${house.name} deleted.${keptContents ? " Contents kept safely." : ""}`);
+}
+function deleteHouse(id) {
+  const house = inventory.houses.find((entry) => entry.id === id);
+  if (!house) return;
+  if (inventory.houses.length < 2) {
+    toast(LAST_HOUSE_DELETE_MESSAGE, true);
+    return;
+  }
+  const contents = inventoryForHouse(inventory, id);
+  const rooms = contents.locations.filter((location) => location.parentId === null);
+  const containers = contents.locations.filter((location) => location.parentId !== null);
+  if (!rooms.length) {
+    confirmDelete(`Delete ${esc(house.name)}?`, "This house is empty. This cannot be undone.",
+      (dialog) => finishHouseDeletion(id, { mode: "move" }, dialog), "Delete house");
+    return;
+  }
+  const houses = inventory.houses.filter((entry) => entry.id !== id);
+  const destinations = houses.map((entry) => `<option value="${esc(entry.id)}">${esc(entry.name)}</option>`).join("");
+  // Only separate moves need a cross-house location index and full paths.
+  let moveIndex;
+  const destinationIndex = () => {
+    if (moveIndex) return moveIndex;
+    const allIndex = createIndex(inventory);
+    const houseNames = new Map(inventory.houses.map((entry) => [entry.id, entry.name]));
+    const owners = new Map();
+    const pending = inventory.locations.filter((location) => location.parentId === null);
+    for (let position = 0; position < pending.length; position++) {
+      const location = pending[position];
+      owners.set(location.id, location.parentId === null ? location.houseId : owners.get(location.parentId));
+      for (const child of allIndex.children.get(location.id) || []) pending.push(child);
+    }
+    const path = (locationId) => `${houseNames.get(owners.get(locationId))} / ${allIndex.path(locationId)}`;
+    let sorted;
+    return moveIndex = { byId: allIndex.byId, path, sortedLocations: () => sorted ||= allIndex.sortedLocations()
+      .map((location) => ({ id: location.id, path: path(location.id) })).sort((a, b) => a.path.localeCompare(b.path)) };
+  };
+  const moves = createDeletionMoves({ rootId: id, rooms, houses, containers, items: contents.items,
+    index: { get byId() { return destinationIndex().byId; }, path: (id) => destinationIndex().path(id),
+      sortedLocations: () => destinationIndex().sortedLocations() }, esc, destinations });
+  const summary = `${rooms.length} room${rooms.length === 1 ? "" : "s"}, ${containers.length} container${containers.length === 1 ? "" : "s"}, and ${contents.items.length} item${contents.items.length === 1 ? "" : "s"}`;
+  chooseSpaceDeletion({ name: house.name, kind: "house", summary, destinations, moves,
+    scanNote: "Rooms keep their own 3D scans when moved.",
+    moveDescription: "Keep your rooms, containers, and items, then delete only this house.",
+    noDestinationMessage: "There is no other house to move contents to. Cancel and add another house to keep the contents, or choose Delete everything.",
+    finish: (options, dialog) => finishHouseDeletion(id, options, dialog) });
+}
+function chooseSpaceDeletion({ name, kind, summary, destinations, moves, scanNote,
+  moveDescription = `Keep your containers and items, then delete only this ${kind}.`,
+  noDestinationMessage = "There is no destination outside this space. Cancel and add another room to keep the contents, or choose Delete everything.",
+  finish }) {
+  const version = inventoryEpoch;
   modal(
-    `Delete ${esc(location.name)}?`,
+    `Delete ${esc(name)}?`,
     `This ${kind} contains ${summary}. Choose what happens to the contents before deleting it.`,
     `<fieldset class="deletion-choices"><legend>What should happen to the contents?</legend>
-      <label class="deletion-option"><input type="radio" name="delete-mode" value="move" ${destinations ? "checked" : "disabled"} required><span><strong>Move contents</strong><small>Keep your containers and items, then delete only this ${kind}.</small></span></label>
+      <label class="deletion-option"><input type="radio" name="delete-mode" value="move" ${destinations ? "checked" : "disabled"} required><span><strong>Move contents</strong><small>${moveDescription}</small></span></label>
       <label class="deletion-option"><input type="radio" name="delete-mode" value="delete" required><span><strong>Delete everything</strong><small>Delete this ${kind} and everything inside. You will confirm again.</small></span></label>
     </fieldset>
-    ${destinations ? "" : '<p class="warning">There is no destination outside this space. Cancel and add another room to keep the contents, or choose Delete everything.</p>'}
+    ${destinations ? "" : `<p class="warning">${noDestinationMessage}</p>`}
     <fieldset data-delete-move ${destinations ? "" : "hidden disabled"}>
       ${moves.fields}
       <p class="modal-description">Pins showing moved contents in their old positions will be cleared. ${scanNote}</p>
     </fieldset><p class="warning" data-settings-error role="alert" hidden></p>`,
-    (data, dialog) => {
+    async (data, dialog) => {
       try {
         if (inventoryEpoch !== version) throw Error("Your inventory changed. Cancel and start again to review the latest contents.");
         if (data.get("delete-mode") === "delete") {
           dialog.close();
           confirmDelete(
-            `Delete everything in ${esc(location.name)}?`,
+            `Delete everything in ${esc(name)}?`,
             `Permanently delete this ${kind}, ${summary}, and their scans and pins. This cannot be undone.`,
-            (confirmation) => finishLocationDeletion(id, { mode: "delete" }, confirmation),
+            (confirmation) => finish({ mode: "delete" }, confirmation),
             "Delete everything",
           );
           return;
         }
         if (data.get("delete-mode") !== "move") throw Error("Choose what should happen to the contents.");
-        finishLocationDeletion(id, moveEditor.read(data), dialog);
+        await finish(moveEditor.read(data), dialog);
       } catch (error) {
-        showSettingsError(dialog, error.message);
+        showSettingsError(dialog, error);
       }
     },
     "Move contents & delete",
@@ -804,7 +953,7 @@ function importData() {
           buttons.forEach((b) => (b.disabled = true));
           const preventClose = (e) => e.preventDefault();
           dialog.addEventListener("cancel", preventClose);
-          let staged;
+          let staged, persisted = false;
           try {
             requireCurrent();
             if (!ownsDialog()) throw Error(staleMessage);
@@ -812,13 +961,12 @@ function importData() {
               ? await stageBackup(parsed)
               : { inventory: data, rollback: async () => {} };
             if (!isCurrent() || !ownsDialog()) {
-              await staged.rollback();
               throw Error(staleMessage);
             }
-            if (!saveInventory(staged.inventory, { replaceUnreadable: true })) {
-              await staged.rollback();
+            if (!await saveInventory(staged.inventory, { replaceUnreadable: true })) {
               throw Error("Could not save the restored inventory.");
             }
+            persisted = true;
             const restoredVersion = inventoryEpoch;
             if (staged.commit) await staged.commit().catch(() => {});
             if (account.authEpoch !== owner || getAssetScope() !== scope ||
@@ -829,6 +977,8 @@ function importData() {
             inventoryChanges.dispatchEvent(new Event("replace"));
             toast("All houses, inventory, and scans have been restored.");
           } catch (error) {
+            if (staged && !persisted) await staged.rollback().catch(() => {});
+            if (error.name === "AbortError") return;
             toast(error.message || "Could not restore the backup.", true);
             if (ownsDialog())
               form.querySelector(".modal-description").textContent = error.message;
@@ -880,18 +1030,19 @@ async function showRoomScan() {
     scanOpening = false;
   }
 }
-function dropInventory(kind, id, destination) {
+async function dropInventory(kind, id, destination) {
   const record = kind === "container" ? index.byId.get(id) : state.items.find((i) => i.id === id);
   if (!record) return;
   try {
     const next = kind === "container"
       ? transferContainer(state, id, destination)
       : transferItem(state, id, destination);
-    if (next === state || !save(next)) return;
+    if (next === state || !await save(next)) return;
     render();
     toast(`Moved ${record.name} to ${index.path(destination)}.`);
     return true;
   } catch (error) {
+    if (error.name === "AbortError") return;
     toast(error.message || "Could not move this item or container.", true);
   }
 }
@@ -905,17 +1056,20 @@ function moveContainer(id) {
     `Move ${esc(container.name)}`,
     "Choose a room or another container. Everything inside moves with it. Pins showing its old position in other scans will be cleared.",
     `<label>Destination<select name="destination" required>${options}</select></label>${destinationCount === 1 ? '<p class="modal-description">Add another room or container to create a destination.</p>' : ""}<p class="warning" data-move-error role="alert" hidden></p>`,
-    (data, d) => {
+    async (data, d, ownsEditor) => {
       const destination = data.get("destination");
       try {
         const next = transferContainer(state, id, destination);
-        if (!save(next))
+        if (!await save(next))
           throw Error("Could not save this move. Your container has not moved. Please try again.");
+        if (!ownsEditor()) return;
         d.close();
         render();
         toast(`Moved ${container.name} to ${index.path(destination)}.`);
       } catch (error) {
+        if (error.name === "AbortError") return;
         const message = d.querySelector("[data-move-error]");
+        if (!message || !d.open) return;
         message.textContent = error.message;
         message.hidden = false;
       }
@@ -937,9 +1091,10 @@ function moveItem(id) {
     `Move ${esc(item.name)}`,
     "Choose any room or container. Existing scan markers for this item will be cleared so you can place it at its new location.",
     `<label>Destination<select name="destination">${state.locations.map((l) => `<option value="${esc(l.id)}" ${l.id === item.locationId ? "selected" : ""}>${esc(index.path(l.id))}</option>`).join("")}</select></label>`,
-    (data, d) => {
+    async (data, d, ownsEditor) => {
       const destination = data.get("destination");
-      if (save(transferItem(state, id, destination))) {
+      if (await save(transferItem(state, id, destination))) {
+        if (!ownsEditor()) return;
         d.close();
         render();
         toast(`Moved to ${index.path(destination)}.`);

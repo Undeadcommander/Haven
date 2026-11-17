@@ -129,6 +129,7 @@ test("item import honors the selected destination and failed saves can be retrie
   expect(await saved(page)).toEqual(original);
   await page.evaluate(() => window.restoreStorage());
   await page.getByRole("button", { name: "Move item here" }).click();
+  await expect(page.locator("#editor")).toBeHidden();
   expect((await saved(page)).items.find((i) => i.id === "keys").locationId).toBe("shelf");
   await page.getByRole("button", { name: "Open Shelf", exact: true }).click();
   await expect(page.locator("#item-keys")).toBeVisible();

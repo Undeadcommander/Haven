@@ -66,6 +66,7 @@ test('container and item gear dialogs stay bounded in a wide inventory', async (
   await page.getByRole('button', { name: 'Settings for Item 0', exact: true }).click();
   await page.locator('#editor').getByRole('button', { name: 'Delete item', exact: true }).click();
   await page.locator('#editor').getByRole('button', { name: 'Delete item', exact: true }).click();
+  await expect(page.locator('#editor')).toBeHidden();
   const after = await page.evaluate(() => JSON.parse(localStorage.getItem('haven-inventory')));
   expect(validState(after)).toBe(true);
   expect(after.items).toHaveLength(999);

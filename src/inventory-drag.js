@@ -92,13 +92,13 @@ export function setupInventoryDrag(root, { getState, getIndex, onMove }) {
     const target = destination(event);
     if (target && !target.contains(event.relatedTarget)) target.classList.remove("drop-over");
   });
-  root.addEventListener("drop", (event) => {
+  root.addEventListener("drop", async (event) => {
     if (!source) return;
     const target = destination(event), moving = source;
     const accepted = allowed(target);
     event.preventDefault();
     clear();
-    if (accepted && onMove(moving.kind, moving.id, target.dataset.dropLocation)) {
+    if (accepted && await onMove(moving.kind, moving.id, target.dataset.dropLocation)) {
       // A successful move renders fresh elements; animate the destination there.
       root.querySelectorAll("[data-drop-location]").forEach((element) => {
         if (element.dataset.dropLocation !== target.dataset.dropLocation) return;

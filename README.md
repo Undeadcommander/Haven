@@ -27,6 +27,8 @@ The `audit:baseline`, `audit:bugs`, `audit:performance`, `audit:ram`, and `audit
 
 ## Multiple houses
 
+Run `npm run audit:house-deletion` for repeatable house-deletion performance and memory checks. Add `-- --depth=160` for the deep nesting stress fixture, or `-- --retention` for a focused dialog-retention probe. Reports are written to `test-results/audit/house-deletion.md` and `house-deletion-retention.md`, alongside raw JSON samples. These checks use isolated synthetic inventory and mocked or disabled account services.
+
 Use the house picker in the header to switch houses or choose **Add house**. Give the new house a name, then add its rooms. The picker includes search for quickly finding a house in a long list and works on desktop and mobile. There is no fixed house-count limit; browser storage and account sync size limits still apply.
 
 Existing inventory stays in **My home**. Each house has its own rooms, nested containers, items, search results, and scan markers. The last selected house is remembered on this device separately for guest mode and each account. Switching houses does not change inventory or trigger a cloud save.
@@ -34,6 +36,8 @@ Existing inventory stays in **My home**. Each house has its own rooms, nested co
 To rename a house, switch to it, open the house picker, and choose **Rename house**. Edit the prefilled name and select **Save**. Names must be unique (ignoring case) and 1–80 characters long. Renaming preserves the house's rooms, items, scans, and current selection, and saves through the same device or account sync as other edits.
 
 Backups include **all houses** and their locally available scan files. Restoring replaces the entire collection after confirmation; older single-home backups are still supported. Account sync includes every house, and copying device inventory into an account adds separate houses without mixing their contents into existing houses.
+
+To delete a house, switch to it and choose **Delete house** in the house picker or house editor. At least one other house must already exist; create another house first if deletion is disabled. Move rooms and their contents together to another house, or choose separate destinations for rooms, containers, and items. **Delete everything** requires a second confirmation and removes the house's rooms, items, scans, and pins. You must always keep at least one house.
 
 If guest inventory cannot be loaded, ordinary edits are blocked rather than replacing the saved value with sample data. Export saves the original raw metadata as a `haven-raw-recovery-*.json` file; it is not a full scan backup and may need repair before restoring. Reload retries loading, and an explicit, confirmed restore can replace the unreadable value. Browser history remembers house context, and existing room links select the house that owns the room.
 
@@ -91,6 +95,8 @@ See [Firebase account setup](firebase/SETUP.md). The integration requires a real
 Use **Sign in → Continue with Google** to create or access an account. Existing guest data is copied only through the explicit **Copy device inventory to account** action. If a copy fails before its inventory is saved, its staged scan files are removed. Account status reports pending, saving, saved, failed, and conflicting changes. Each account has a separate local cache; scan files remain on the originating device and can be transferred through backups.
 
 Sync acknowledgments and safe cache-only updates with unchanged inventory do not interrupt editing; accepted acknowledgments advance the local sync revision before the next save. If another tab actually changes the inventory, editing and background sync pause and ask you to reload. Queued changes, delayed downloads, and old upload acknowledgments cannot replace a newer tab’s pending cache or discard its retained scan files.
+
+Inventory writes are serialized per guest or account storage key. The saved snapshot is checked inside the same lock as the write, so competing tabs cannot both pass a stale check and overwrite one another. Saves finish before dialogs close; cancellation or a scope change while waiting for the lock cancels the pending write. Web Locks are used where available, with an IndexedDB transaction mutex as the browser fallback.
 
 ### Account deletion
 

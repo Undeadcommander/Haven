@@ -6,6 +6,19 @@ import {
   mergeGuestInventory,
 } from "../src/account-sync.js";
 import { initialState, validState } from "../src/store.js";
+import { withInventoryWriteLock } from "../src/inventory-write-lock.js";
+function startedCall(object, method) {
+  const original = object[method];
+  let started;
+  const pending = new Promise((resolve) => { started = resolve; });
+  object[method] = function (...args) {
+    object[method] = original;
+    started();
+    return original.apply(this, args);
+  };
+  return pending;
+}
+
 const storage = () => {
   const map = new Map();
   return {
@@ -48,7 +61,7 @@ test("equivalent account cache echoes do not count as external inventory changes
   const { sync, store } = controller(baseRemote());
   await sync.select("alice");
   await sync.receive(null);
-  sync.saveLocal(edited("Keys"));
+  await sync.saveLocal(edited("Keys"));
   const pending = structuredClone(sync.record);
   store.setItem(accountKey("alice"), JSON.stringify(pending));
   assert.equal(sync.reconcileCache(), true);
@@ -58,7 +71,7 @@ test("equivalent account cache echoes do not count as external inventory changes
   assert.equal(sync.record.revision, 1);
   assert.equal(sync.record.dirty, false);
   assert.deepEqual(sync.record.inventory, pending.inventory);
-  sync.saveLocal(edited("More keys"));
+  await sync.saveLocal(edited("More keys"));
   assert.equal(sync.record.inventory.items[0].name, "More keys");
   await sync.select(null);
 });
@@ -95,7 +108,7 @@ test("queued genuine inventory transitions cannot be hidden by a later equal cac
   store.setItem(accountKey("alice"), JSON.stringify(latest));
   assert.equal(sync.reconcileCache({ oldValue: JSON.stringify(original), newValue: JSON.stringify(intermediate) }), false);
   assert.equal(sync.reconcileCache({ oldValue: JSON.stringify(intermediate), newValue: JSON.stringify(latest) }), false);
-  assert.throws(() => sync.saveLocal(edited("Must not replace retention")), /another tab/);
+  await assert.rejects(() => sync.saveLocal(edited("Must not replace retention")), /another tab/);
   assert.deepEqual(JSON.parse(store.getItem(accountKey("alice"))), latest);
   assert.equal(sync.status, "stale");
   assert.equal(sync.retainedAssetIds, null);
@@ -106,7 +119,7 @@ test("cloud watch delivery before a queued equivalent acknowledgment does not ma
   const { sync, store } = controller(baseRemote());
   await sync.select("alice");
   await sync.receive(null);
-  sync.saveLocal(edited("Already accepted"));
+  await sync.saveLocal(edited("Already accepted"));
   store.setItem(accountKey("alice"), JSON.stringify({ ...sync.record, revision: 1, dirty: false }));
   await sync.receive({ revision: 1 });
   assert.equal(sync.status, "synced");
@@ -134,8 +147,10 @@ test("a sibling edit stops a delayed download before it can overwrite the durabl
   const { sync, visible } = controller({ ...baseRemote(), read: () => pending.promise }, store);
   await writer.select("alice");
   await sync.select("alice");
+  const reading = startedCall(sync.remote, "read");
   const download = sync.receive({ revision: 2 });
-  writer.saveLocal(edited("New sibling room contents"));
+  await reading;
+  await writer.saveLocal(edited("New sibling room contents"));
   const saved = store.getItem(accountKey("alice"));
   pending.resolve(initialState());
   await download;
@@ -144,7 +159,7 @@ test("a sibling edit stops a delayed download before it can overwrite the durabl
   assert.equal(visible().items.length, 0);
   sync.retry();
   assert.equal(sync.remoteKnown, false);
-  writer.saveLocal(edited("Another save without reloading"));
+  await writer.saveLocal(edited("Another save without reloading"));
   await sync.select("alice");
   assert.equal(visible().items[0].name, "Another save without reloading");
   await writer.select(null);
@@ -159,8 +174,10 @@ test("an old publish acknowledgment cannot overwrite a sibling pending edit", as
   await sync.select("alice");
   await sync.receive({ revision: 1 });
   await writer.select("alice");
+  const publishing = startedCall(sync.remote, "publish");
   const upload = sync.flush();
-  writer.saveLocal(edited("New sibling edit"));
+  await publishing;
+  await writer.saveLocal(edited("New sibling edit"));
   const saved = store.getItem(accountKey("alice"));
   pending.resolve(2);
   await upload;
@@ -176,13 +193,15 @@ test("a verified equivalent acknowledgment advances the base of an overlapping c
   const { sync, store } = controller(remote);
   await sync.select("alice");
   await sync.receive(null);
-  sync.saveLocal(edited("Accepted equivalent inventory"));
+  await sync.saveLocal(edited("Accepted equivalent inventory"));
+  const publishing = startedCall(sync.remote, "publish");
   const upload = sync.flush();
+  await publishing;
   const oldValue = store.getItem(accountKey("alice"));
   const newValue = JSON.stringify({ ...sync.record, revision: 1, dirty: false });
   store.setItem(accountKey("alice"), newValue);
   assert.equal(sync.reconcileCache({ oldValue, newValue }), true);
-  sync.saveLocal(edited("New edit after acknowledgment"));
+  await sync.saveLocal(edited("New edit after acknowledgment"));
   pending.reject(Object.assign(Error("Already published"), { code: "sync/conflict", remote: { revision: 1 } }));
   await upload;
   assert.equal(sync.status, "pending");
@@ -203,12 +222,14 @@ test("late older acknowledgments cannot rewind a reconciled revision or asset ba
   const scanned = (assetId) => ({ ...initialState(), scans: [{ id: "scan", assetId, locationId: "living-room", name: "Room", format: "obj" }] });
   await sync.select("alice");
   await sync.receive(null);
-  sync.saveLocal(scanned("old-file"));
+  await sync.saveLocal(scanned("old-file"));
+  const publishing = startedCall(sync.remote, "publish");
   const upload = sync.flush();
-  sync.saveLocal(scanned("new-file"));
+  await publishing;
+  await sync.saveLocal(scanned("new-file"));
   store.setItem(accountKey("alice"), JSON.stringify({ ...sync.record, revision: 2, dirty: false }));
   assert.equal(sync.reconcileCache(), true);
-  sync.saveLocal(initialState());
+  await sync.saveLocal(initialState());
   const saved = store.getItem(accountKey("alice"));
   pending.resolve(1);
   await upload;
@@ -225,7 +246,7 @@ test("pending scan removals retain the account base across reload and concurrent
   const { sync, store } = controller(remote);
   await sync.select("alice");
   await sync.receive({ revision: 1 });
-  sync.saveLocal(edited("Keys"));
+  await sync.saveLocal(edited("Keys"));
   assert.deepEqual([...sync.retainedAssetIds], ["old-file"]);
   const reloaded = controller(remote, store).sync;
   await reloaded.select("alice");
@@ -234,10 +255,12 @@ test("pending scan removals retain the account base across reload and concurrent
   assert.equal(reloaded.retainedAssetIds, null);
   assert.deepEqual(reloaded.record.baseAssets, ["old-file"]);
   await reloaded.select(null);
+  const publishing = startedCall(sync.remote, "publish");
   const upload = sync.flush();
+  await publishing;
   const next = edited("Edited during upload");
   next.scans = [{ ...inventory.scans[0], assetId: "new-file" }];
-  sync.saveLocal(next);
+  await sync.saveLocal(next);
   pending.resolve(2);
   await upload;
   assert.deepEqual([...sync.retainedAssetIds], ["new-file"]);
@@ -247,7 +270,7 @@ test("successful sync stores revision and clears dirty only after remote commit"
   const { sync, store } = controller(baseRemote());
   await sync.select("alice");
   await sync.receive(null);
-  sync.saveLocal(edited("Keys"));
+  await sync.saveLocal(edited("Keys"));
   assert.equal(sync.record.dirty, true);
   await sync.flush();
   assert.equal(sync.record.revision, 1);
@@ -266,7 +289,7 @@ test("failed cloud upload keeps edits and allows explicit retry", async () => {
   const { sync } = controller(remote);
   await sync.select("alice");
   await sync.receive(null);
-  sync.saveLocal(edited("Offline item"));
+  await sync.saveLocal(edited("Offline item"));
   await sync.flush();
   assert.equal(sync.status, "error");
   assert.equal(sync.record.dirty, true);
@@ -281,7 +304,9 @@ test("stale cloud reads cannot replace a different account or edits made during 
   remote.read = () => pending.promise;
   const { sync, visible } = controller(remote);
   await sync.select("alice");
+  const reading = startedCall(sync.remote, "read");
   const load = sync.receive({ revision: 1 });
+  await reading;
   await sync.select("bob");
   pending.resolve(edited("Alice private"));
   await load;
@@ -326,7 +351,7 @@ for (const choice of ["local", "cloud"]) {
       assert.equal(store.getItem(accountKey("alice")), acceptedCache);
       assert.equal(store.getItem("haven-recovery:alice"), recovery);
       assert.deepEqual(attempts, [2]);
-      first.saveLocal(edited("Next edit after resolution"));
+      await first.saveLocal(edited("Next edit after resolution"));
       await first.flush();
       assert.equal(first.status, "synced");
       assert.equal(first.record.revision, 4);
@@ -345,7 +370,7 @@ test("conflicting edits require a choice and preserve a recovery copy", async ()
   });
   await sync.select("alice");
   await sync.receive(null);
-  sync.saveLocal(edited("Device version"));
+  await sync.saveLocal(edited("Device version"));
   await sync.receive({ revision: 2 });
   assert.equal(sync.status, "conflict");
   assert.equal(sync.record.inventory.items[0].name, "Device version");
@@ -364,9 +389,11 @@ test("edits made during upload stay pending and subsequent upload uses new revis
   const { sync } = controller(remote);
   await sync.select("alice");
   await sync.receive(null);
-  sync.saveLocal(edited("First"));
+  await sync.saveLocal(edited("First"));
+  const publishing = startedCall(sync.remote, "publish");
   const upload = sync.flush();
-  sync.saveLocal(edited("Second"));
+  await publishing;
+  await sync.saveLocal(edited("Second"));
   pending.resolve(1);
   await upload;
   assert.equal(sync.record.dirty, true);
@@ -388,8 +415,10 @@ test("own watch notification arriving before commit acknowledgement does not cre
   const { sync } = controller(remote);
   await sync.select("alice");
   await sync.receive(null);
-  sync.saveLocal(edited("Own change"));
+  await sync.saveLocal(edited("Own change"));
+  const publishing = startedCall(sync.remote, "publish");
   const upload = sync.flush();
+  await publishing;
   await sync.receive({ revision: 1 });
   pending.resolve(1);
   await upload;
@@ -518,7 +547,7 @@ test("retry preserves pending edits and waits for the server revision before upl
   try {
     await sync.select("alice");
     await sync.receive(null);
-    sync.saveLocal(edited("Unsaved keys"));
+    await sync.saveLocal(edited("Unsaved keys"));
     await sync.flush();
     sync.retry();
     assert.equal(sync.remoteKnown, false);
@@ -539,8 +568,10 @@ test("retry during an upload does not interrupt or duplicate the commit", async 
   const { sync } = controller(remote);
   await sync.select("alice");
   await sync.receive(null);
-  sync.saveLocal(edited("Keys"));
+  await sync.saveLocal(edited("Keys"));
+  const publishing = startedCall(sync.remote, "publish");
   const upload = sync.flush();
+  await publishing;
   sync.retry();
   assert.equal(sync.status, "saving");
   assert.equal(uploads, 1);
@@ -557,12 +588,14 @@ test("deletion pauses pending uploads and survives a reload without restoring cl
   const { sync, store } = controller(remote);
   await sync.select("alice");
   await sync.receive(null);
-  sync.saveLocal(edited("To delete"));
+  await sync.saveLocal(edited("To delete"));
+  const publishing = startedCall(sync.remote, "publish");
   const upload = sync.flush();
+  await publishing;
   store.setItem("haven-deleting:alice", "pending");
   const pause = sync.pauseForDeletion();
   assert.equal(sync.status, "deleting");
-  assert.throws(() => sync.saveLocal(edited("Cannot restore")), /deletion/);
+  await assert.rejects(() => sync.saveLocal(edited("Cannot restore")), /deletion/);
   pending.resolve(1);
   await Promise.all([pause, upload]);
   assert.equal(sync.status, "deleting");
@@ -577,10 +610,124 @@ test("deletion started on another device stops this device from uploading", asyn
   const { sync, store } = controller(baseRemote());
   await sync.select("alice");
   await sync.receive(null);
-  sync.saveLocal(edited("Pending"));
+  await sync.saveLocal(edited("Pending"));
   await sync.receive({ revision: 1, snapshotId: "deleting-test" });
   assert.equal(sync.status, "deleting");
   assert.equal(store.getItem("haven-deleting:alice"), "pending");
   assert.equal(sync.remoteKnown, false);
   await sync.select(null);
 });
+
+for (const returnToAlice of [false, true]) {
+  test(`a queued save rejects an auth switch${returnToAlice ? " back to the same account" : ""}`, async () => {
+    const { sync, store } = controller(baseRemote());
+    await sync.select("alice");
+    await sync.receive(null);
+    const before = store.getItem(accountKey("alice"));
+    let rejected, selected;
+    await withInventoryWriteLock(accountKey("alice"), () => {
+      rejected = assert.rejects(sync.saveLocal(edited("Obsolete dialog")), /active account changed/);
+      selected = sync.select("bob");
+      if (returnToAlice) selected = sync.select("alice");
+    });
+    await selected;
+    await rejected;
+    assert.equal(store.getItem(accountKey("alice")), before);
+    assert.equal(store.getItem(accountKey("bob")), null);
+    assert.equal(sync.record.inventory.items.length, 0);
+    await sync.select(null);
+  });
+}
+
+test("a queued save checks UI currency inside the lock and aborts without changing durable or pending state", async () => {
+  const { sync, store } = controller(baseRemote());
+  await sync.select("alice");
+  await sync.receive(null);
+  const before = structuredClone(sync.record), raw = store.getItem(accountKey("alice")), edit = sync.edit;
+  let current = true, checked = 0, rejected;
+  await withInventoryWriteLock(accountKey("alice"), () => {
+    rejected = assert.rejects(sync.saveLocal(edited("Cancelled dialog"), {
+      isCurrent: () => { checked++; return current; },
+    }), { name: "AbortError" });
+    assert.equal(checked, 0);
+    current = false;
+  });
+  await rejected;
+  assert.equal(checked, 1);
+  assert.deepEqual(sync.record, before);
+  assert.equal(sync.edit, edit);
+  assert.equal(store.getItem(accountKey("alice")), raw);
+  await sync.saveLocal(edited("Current dialog"), { isCurrent: () => true });
+  assert.equal(sync.record.inventory.items[0].name, "Current dialog");
+  await sync.select(null);
+});
+
+test("a queued deletion signal cannot mark the account selected while it waited", async () => {
+  const { sync, store } = controller(baseRemote());
+  await sync.select("alice");
+  let received, selected;
+  await withInventoryWriteLock(accountKey("alice"), () => {
+    received = sync.receive({ revision: 1, snapshotId: "deleting-test" });
+    selected = sync.select("bob");
+  });
+  await selected;
+  await received;
+  assert.equal(sync.status, "connecting");
+  assert.equal(store.getItem("haven-deleting:bob"), null);
+  assert.equal(store.getItem("haven-deleting:alice"), null);
+  await sync.select(null);
+});
+
+test("a failed cloud conflict choice preserves the durable dirty inventory, recovery and retained asset base", async () => {
+  const { sync, store } = controller({ ...baseRemote(), read: async () => { throw Error("Offline download"); } });
+  await sync.select("alice");
+  await sync.receive(null);
+  await sync.saveLocal(edited("Keep this local edit"));
+  await sync.receive({ revision: 2 });
+  const before = structuredClone(sync.record), raw = store.getItem(accountKey("alice"));
+  await sync.resolve("cloud");
+  assert.equal(sync.status, "error");
+  assert.equal(store.getItem(accountKey("alice")), raw);
+  assert.deepEqual(sync.record, before);
+  assert.deepEqual(JSON.parse(store.getItem("haven-recovery:alice")), before.inventory);
+  assert.deepEqual(sync.record.baseAssets, []);
+  await sync.select(null);
+});
+
+for (const change of ["local edit", "sibling edit", "auth switch"]) {
+  test(`a cloud conflict choice cannot replace a ${change} made during its download`, async () => {
+    const gate = deferred();
+    const { sync, store } = controller({ ...baseRemote(), read: () => gate.promise });
+    const sibling = controller(baseRemote(), store).sync;
+    try {
+      await sync.select("alice");
+      await sync.receive(null);
+      await sync.saveLocal(edited("Original device choice"));
+      await sync.receive({ revision: 2 });
+      await sibling.select("alice");
+      const reading = startedCall(sync.remote, "read");
+      const resolution = sync.resolve("cloud");
+      await reading;
+      assert.equal(sync.record.dirty, true, "the pending local copy remains recoverable during download");
+      assert.equal(sync.retainedAssetIds, null, "cleanup pauses while loading the chosen inventory");
+      if (change === "auth switch") await sync.select("bob");
+      else await (change === "local edit" ? sync : sibling).saveLocal(edited("Newer edit"));
+      const durable = store.getItem(accountKey("alice"));
+      gate.resolve(edited("Older chosen cloud inventory"));
+      await resolution;
+      assert.equal(store.getItem(accountKey("alice")), durable);
+      assert.equal(JSON.parse(store.getItem("haven-recovery:alice")).items[0].name, "Original device choice");
+      if (change === "auth switch") {
+        assert.equal(sync.uid, "bob");
+        assert.equal(sync.record.inventory.items.length, 0);
+        assert.equal(store.getItem(accountKey("bob")), null);
+      } else {
+        assert.equal(sync.status, change === "local edit" ? "conflict" : "stale");
+        assert.equal(JSON.parse(durable).inventory.items[0].name, "Newer edit");
+      }
+    } finally {
+      await sync.select(null);
+      await sibling.select(null);
+    }
+  });
+}

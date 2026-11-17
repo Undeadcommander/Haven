@@ -65,6 +65,7 @@ test("room, container, and item gear deletion focuses and highlights Cancel; Ent
   expect(await inventory(page)).toEqual(before);
   await gearDelete(page, "Lamp", "item");
   await editor(page).getByRole("button", { name: "Delete item", exact: true }).click();
+  await expect(editor(page)).toBeHidden();
   const after = await inventory(page);
   expect(after.items.some((item) => item.id === "lamp")).toBe(false);
   expect(after.markers.some((marker) => marker.targetId === "lamp")).toBe(false);
@@ -145,6 +146,7 @@ test("container deletion from All containers keeps the current view and can move
   await gearDelete(page, "Cabinet", "container");
   await editor(page).getByRole("combobox", { name: "Destination", exact: true }).selectOption("living-room");
   await editor(page).getByRole("button", { name: "Move contents & delete", exact: true }).click();
+  await expect(editor(page)).toBeHidden();
   await expect(page.locator("h1")).toHaveText("All your containers.");
   const data = await inventory(page);
   expect(data.locations.some((location) => location.id === "cabinet")).toBe(false);
@@ -192,6 +194,7 @@ test("last occupied room has no move destination and requires an explicit destru
   await editor(page).getByRole("radio", { name: /Delete everything/ }).check();
   await editor(page).getByRole("button", { name: "Continue", exact: true }).click();
   await editor(page).getByRole("button", { name: "Delete everything", exact: true }).click();
+  await expect(editor(page)).toBeHidden();
   const after = await inventory(page);
   expect(after.locations).toEqual([]);
   expect(after.items).toEqual([]);

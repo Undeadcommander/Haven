@@ -14,6 +14,7 @@
     "audit:performance": "node scripts/audit-performance.mjs",
     "audit:ram": "node scripts/audit-ram.mjs",
     "audit:leaks": "node scripts/audit-leaks.mjs",
+    "audit:house-deletion": "node scripts/audit-house-deletion.mjs",
     "test:rules": "firebase emulators:exec --project demo-haven --only firestore \"node --test tests/rules/*.test.js\""
   },
   "devDependencies": {

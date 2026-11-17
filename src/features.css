@@ -332,3 +332,4 @@
 .photo-editor-actions button { min-height: 38px; }
 .photo-editor-actions .text-button { margin-right: auto; }
 #editor button:disabled { opacity: .5; cursor: wait; }
+#editor .editor-delete:disabled { cursor: not-allowed; }

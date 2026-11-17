@@ -2,7 +2,10 @@ import { test, expect } from "./fixture.js";
 import { readFile } from "node:fs/promises";
 
 const saved = (page) => page.evaluate(() => JSON.parse(localStorage.getItem("haven-inventory")));
-const save = (page) => page.getByRole("button", { name: "Save", exact: true }).click();
+const save = async (page) => {
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.locator("#editor")).toBeHidden();
+};
 const settings = (page, name) => page.getByRole("button", { name: `Settings for ${name}`, exact: true }).click();
 const photo = {
   name: "photo.png", mimeType: "image/png",

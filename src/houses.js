@@ -1,7 +1,9 @@
 import { createLocationTree } from "./location-tree.js";
+import { removeLocation } from "./inventory-delete.js";
 
 export const DEFAULT_HOUSE_ID = "my-home";
 export const MAX_HOUSE_NAME_LENGTH = 80;
+export const LAST_HOUSE_DELETE_MESSAGE = "Create another house before deleting your last house.";
 
 export function validHouses(inventory) {
   if (inventory.houses === undefined)
@@ -103,5 +105,73 @@ export function renameHouse(inventory, id, name) {
   return {
     ...normalized,
     houses: normalized.houses.map((house) => house.id === id ? { ...house, name: trimmed } : house),
+  };
+}
+
+export function removeHouse(inventory, id, {
+  mode = "move", destinationHouseId = null,
+  roomDestinations = new Map(), containerDestinations = new Map(), itemDestinations = new Map(),
+} = {}) {
+  const normalized = withHouses(inventory);
+  if (!normalized.houses.some((house) => house.id === id))
+    throw Error("This house no longer exists. Choose another house.");
+  if (normalized.houses.length < 2) throw Error(LAST_HOUSE_DELETE_MESSAGE);
+  if (mode !== "move" && mode !== "delete")
+    throw Error("Choose whether to move the contents or delete everything.");
+
+  // Symbols cannot collide with any persisted ID. Treat houses as temporary
+  // locations so bulk/separate moves share the location deletion invariants.
+  const roots = new Map(normalized.houses.map((house) => [house.id, Symbol(house.id)]));
+  const rootHouses = new Map([...roots].map(([houseId, root]) => [root, houseId]));
+  const locations = new Map(normalized.locations.map((location) => [location.id, location]));
+  const rooms = new Set(normalized.locations
+    .filter((location) => location.parentId === null && location.houseId === id)
+    .map((location) => location.id));
+  const assignments = new Map();
+  const houseDestination = (houseId) => {
+    if (houseId === id || !roots.has(houseId))
+      throw Error("Choose an existing destination house other than the house being deleted.");
+    return roots.get(houseId);
+  };
+  if (mode === "move") {
+    if (destinationHouseId !== null) houseDestination(destinationHouseId);
+    for (const [roomId, houseId] of roomDestinations) {
+      if (!rooms.has(roomId)) throw Error("Choose a room inside the house being deleted.");
+      assignments.set(roomId, houseDestination(houseId));
+    }
+    for (const [containerId, destination] of containerDestinations) {
+      if (!locations.has(containerId) || locations.get(containerId).parentId === null)
+        throw Error("Choose a container inside the house being deleted.");
+      if (!locations.has(destination)) throw Error("Choose an existing destination room or container.");
+      assignments.set(containerId, destination);
+    }
+    for (const destination of itemDestinations.values())
+      if (!locations.has(destination)) throw Error("Choose an existing destination room or container.");
+    for (const roomId of rooms)
+      if (!assignments.has(roomId)) assignments.set(roomId, houseDestination(destinationHouseId));
+  }
+
+  const next = removeLocation({
+    ...normalized,
+    locations: [
+      ...[...roots.values()].map((root) => ({ id: root, parentId: null })),
+      ...normalized.locations.map((location) => {
+        if (location.parentId !== null) return location;
+        const { houseId, ...room } = location;
+        return { ...room, parentId: roots.get(houseId) };
+      }),
+    ],
+  }, roots.get(id), { mode, containerDestinations: assignments, itemDestinations });
+
+  return {
+    ...next,
+    houses: normalized.houses.filter((house) => house.id !== id),
+    locations: next.locations.filter((location) => !rootHouses.has(location.id)).map((location) => {
+      if (!rootHouses.has(location.parentId)) return location;
+      const houseId = rootHouses.get(location.parentId);
+      const original = locations.get(location.id);
+      return original.parentId === null && original.houseId === houseId
+        ? original : { ...location, parentId: null, houseId };
+    }),
   };
 }

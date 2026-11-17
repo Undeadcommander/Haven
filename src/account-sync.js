@@ -1,6 +1,7 @@
 import { initialState, validState } from "./store.js";
 import { withHouses, MAX_HOUSE_NAME_LENGTH } from "./houses.js";
 import { deletionKey, isDeletingRecord } from "./delete-account-data.js";
+import { withInventoryWriteLock } from "./inventory-write-lock.js";
 export const accountKey = (uid) => `haven-account:${uid}`;
 const scanAssets = (inventory) => [...new Set((inventory?.scans || []).map((scan) => scan.assetId))];
 
@@ -25,6 +26,7 @@ export class AccountSync {
     this.notify?.();
   }
   cache(record = this.record, uid = this.uid) {
+    // Low-level write: application callers must hold accountKey(uid)'s lock.
     const value = JSON.stringify(record);
     this.storage.setItem(accountKey(uid), value);
     if (uid === this.uid) this.cacheValue = value;
@@ -129,20 +131,50 @@ export class AccountSync {
       },
     );
   }
-  saveLocal(inventory) {
-    if (this.status === "deleting" || this.storage.getItem(deletionKey(this.uid)))
-      throw Error("Account deletion is in progress. Editing and sync are paused.");
-    if (!this.ensureCurrentCache()) throw Error(this.message);
-    // Keep the last account version's files until this edit has been accepted.
-    // Older dirty records without this list must defer garbage collection.
-    const baseAssets = this.record.dirty ? this.record.baseAssets : scanAssets(this.record.inventory);
-    const next = { ...this.record, inventory, dirty: true, baseAssets };
-    this.cache(next);
-    this.record = next;
-    this.edit++;
-    if (this.status !== "conflict")
-      this.signal("pending", "Saved on this device · waiting to sync");
-    this.schedule();
+  currentScope(uid, generation) {
+    return !!uid && uid === this.uid && generation === this.generation;
+  }
+  reportLockFailure(uid, generation, error) {
+    if (!this.currentScope(uid, generation) || ["stale", "deleting"].includes(this.status)) return;
+    clearTimeout(this.timer);
+    this.remoteKnown = false;
+    this.signal("error", error.message || "Could not safely access browser storage. Retry sync to reconnect.");
+  }
+  // Call only inside this account's inventory lock, immediately before a write
+  // or a decision based on the durable cache. Auth may change while queued.
+  writable(uid, generation) {
+    if (!this.currentScope(uid, generation)) return false;
+    if (this.status === "deleting" || this.storage.getItem(deletionKey(uid))) {
+      this.disconnect();
+      this.signal("deleting", "Account deletion is in progress. Editing and sync are paused.");
+      return false;
+    }
+    return this.ensureCurrentCache() && this.currentScope(uid, generation);
+  }
+  async saveLocal(inventory, { isCurrent = () => true, onCommitted = () => {} } = {}) {
+    const uid = this.uid, generation = this.generation;
+    return withInventoryWriteLock(accountKey(uid), () => {
+      if (!isCurrent()) {
+        const error = typeof DOMException === "function"
+          ? new DOMException("This edit is no longer current.", "AbortError")
+          : Object.assign(new Error("This edit is no longer current."), { name: "AbortError" });
+        throw error;
+      }
+      if (!this.currentScope(uid, generation))
+        throw Error("The active account changed before this edit could be saved.");
+      if (!this.writable(uid, generation)) throw Error(this.message);
+      // Keep the last account version's files until this edit has been accepted.
+      // Older dirty records without this list must defer garbage collection.
+      const baseAssets = this.record.dirty ? this.record.baseAssets : scanAssets(this.record.inventory);
+      const next = { ...this.record, inventory, dirty: true, baseAssets };
+      this.cache(next);
+      this.record = next;
+      this.edit++;
+      onCommitted();
+      if (this.status !== "conflict")
+        this.signal("pending", "Saved on this device · waiting to sync");
+      this.schedule();
+    });
   }
   schedule() {
     clearTimeout(this.timer);
@@ -150,123 +182,133 @@ export class AccountSync {
       this.timer = setTimeout(() => this.flush(), this.delay);
   }
   async receive(remote, generation = this.generation) {
-    if (generation !== this.generation || !this.uid || this.status === "stale") return;
-    if (isDeletingRecord(remote)) {
-      this.disconnect();
-      this.signal("deleting", "Account deletion has started. Editing and sync are paused.");
-      this.storage.setItem(deletionKey(this.uid), "pending");
-      return;
-    }
-    if (!this.ensureCurrentCache()) return;
-    this.remoteKnown = true;
-    if (this.inFlight) {
-      this.pendingRemote = remote;
-      return;
-    }
-    const sequence = ++this.readSequence;
-    const revision = remote?.revision || 0;
-    if (revision && revision < this.record.revision) return;
-    if (revision === this.record.revision) {
-      if (this.record.dirty) this.schedule();
-      else this.signal("synced", "Account is up to date");
-      return;
-    }
-    if (this.record.dirty) {
-      this.conflictRecord = remote;
-      this.signal(
-        "conflict",
-        "Another device changed this inventory. Choose which version to keep.",
-      );
-      return;
-    }
-    const edit = this.edit;
-    this.signal("connecting", "Loading your account inventory…");
+    const uid = this.uid;
+    if (!this.currentScope(uid, generation)) return;
+    let load;
     try {
-      const inventory = remote
-        ? await this.remote.read(this.uid, remote)
-        : initialState();
-      if (generation !== this.generation || sequence !== this.readSequence) return;
-      if (edit !== this.edit || this.record.dirty) {
-        this.conflictRecord = remote;
-        this.signal("conflict", "Local and account changes need your review.");
-        return;
-      }
-      if (!validState(inventory))
-        throw Error(
-          "The account inventory could not be read. Your local copy is unchanged.",
-        );
-      if (!this.ensureCurrentCache()) return;
-      if (revision && revision < this.record.revision) return;
-      const record = { inventory, revision, dirty: false };
-      this.cache(record);
-      this.record = record;
-      this.replace(inventory, this.uid);
-      this.signal("synced", "Account is up to date");
+      load = await withInventoryWriteLock(accountKey(uid), () => {
+        if (!this.currentScope(uid, generation)) return;
+        if (isDeletingRecord(remote)) {
+          // Deletion signals must also win over stale inventory observations.
+          try { this.storage.setItem(deletionKey(uid), "pending"); }
+          finally {
+            this.disconnect();
+            this.signal("deleting", "Account deletion has started. Editing and sync are paused.");
+          }
+          return;
+        }
+        if (!this.writable(uid, generation)) return;
+        this.remoteKnown = true;
+        if (this.inFlight) {
+          this.pendingRemote = remote;
+          return;
+        }
+        const sequence = ++this.readSequence;
+        const revision = remote?.revision || 0;
+        if (revision && revision < this.record.revision) return;
+        if (revision === this.record.revision) {
+          if (this.record.dirty) this.schedule();
+          else this.signal("synced", "Account is up to date");
+          return;
+        }
+        if (this.record.dirty) {
+          this.conflictRecord = remote;
+          this.signal("conflict", "Another device changed this inventory. Choose which version to keep.");
+          return;
+        }
+        this.signal("connecting", "Loading your account inventory...");
+        return { sequence, revision, edit: this.edit };
+      });
+      if (!load || !this.currentScope(uid, generation)) return;
+      const inventory = remote ? await this.remote.read(uid, remote) : initialState();
+      await withInventoryWriteLock(accountKey(uid), () => {
+        if (!this.currentScope(uid, generation) || load.sequence !== this.readSequence ||
+            !this.writable(uid, generation)) return;
+        if (load.edit !== this.edit || this.record.dirty) {
+          this.conflictRecord = remote;
+          this.signal("conflict", "Local and account changes need your review.");
+          return;
+        }
+        if (!validState(inventory))
+          throw Error("The account inventory could not be read. Your local copy is unchanged.");
+        if (load.revision && load.revision < this.record.revision) return;
+        const record = { inventory, revision: load.revision, dirty: false };
+        this.cache(record, uid);
+        this.record = record;
+        this.replace(inventory, uid);
+        this.signal("synced", "Account is up to date");
+      });
     } catch (error) {
-      if (generation === this.generation && sequence === this.readSequence)
-        this.signal("error", error.message || "Could not load your account.");
+      await withInventoryWriteLock(accountKey(uid), () => {
+        if (this.currentScope(uid, generation) && (!load || load.sequence === this.readSequence) &&
+            this.writable(uid, generation))
+          this.signal("error", error.message || "Could not load your account.");
+      }).catch((failure) => this.reportLockFailure(uid, generation, failure));
     }
   }
   async flush() {
-    if (
-      !this.uid ||
-      !this.record?.dirty ||
-      !this.remoteKnown ||
-      this.status === "conflict" ||
-      this.status === "deleting" ||
-      this.status === "stale" ||
-      this.inFlight
-    )
-      return;
-    if (!this.ensureCurrentCache() || !this.record.dirty) return;
-    const generation = this.generation,
-      uid = this.uid,
-      record = this.record,
-      edit = this.edit;
-    this.signal("saving", "Saving to your account…");
-    const task = this.remote.publish(uid, record.inventory, record.revision);
-    this.inFlight = task;
+    const uid = this.uid, generation = this.generation;
+    if (!uid) return;
+    let upload;
     try {
-      const revision = await task;
-      if (generation !== this.generation) return;
-      if (!this.ensureCurrentCache() || revision < this.record.revision) return;
-      const next = { ...this.record, revision, dirty: this.edit !== edit,
-        baseAssets: scanAssets(record.inventory) };
-      this.cache(next);
-      this.record = next;
-      this.signal(
-        next.dirty ? "pending" : "synced",
-        next.dirty ? "New changes waiting to sync" : "Saved to your account",
-      );
+      upload = await withInventoryWriteLock(accountKey(uid), () => {
+        if (!this.currentScope(uid, generation) || !this.record?.dirty || !this.remoteKnown ||
+            ["conflict", "deleting", "stale"].includes(this.status) || this.inFlight ||
+            !this.writable(uid, generation) || !this.record.dirty) return;
+        const record = this.record, edit = this.edit;
+        // Reserve the upload before releasing the mutex, without network I/O
+        // inside the critical section. Other flushes/watch events see inFlight.
+        let finish;
+        const pending = new Promise((resolve) => { finish = resolve; });
+        upload = { record, edit, pending, finish };
+        this.inFlight = pending;
+        this.signal("saving", "Saving to your account...");
+        return upload;
+      });
+      if (!upload) return;
+      if (!this.currentScope(uid, generation) || this.status === "deleting") return;
+      const revision = await this.remote.publish(uid, upload.record.inventory, upload.record.revision);
+      await withInventoryWriteLock(accountKey(uid), () => {
+        if (!this.writable(uid, generation) || revision < this.record.revision) return;
+        const next = { ...this.record, revision, dirty: this.edit !== upload.edit,
+          baseAssets: scanAssets(upload.record.inventory) };
+        this.cache(next, uid);
+        this.record = next;
+        this.signal(next.dirty ? "pending" : "synced",
+          next.dirty ? "New changes waiting to sync" : "Saved to your account");
+      });
     } catch (error) {
-      if (generation !== this.generation) return;
-      if (!this.ensureCurrentCache()) return;
-      if (error.code === "sync/conflict" && this.record.revision > record.revision &&
-          error.remote?.revision <= this.record.revision) {
-        this.signal(this.record.dirty ? "pending" : "synced",
-          this.record.dirty ? "New changes waiting to sync" : "Account is up to date");
-      } else if (error.code === "sync/conflict") {
-        this.conflictRecord = error.remote;
-        this.signal(
-          "conflict",
-          "Another device saved changes first. Choose which version to keep.",
-        );
-      } else
-        this.signal(
-          "error",
-          error.message ||
-            "Sync failed. Your changes are saved on this device.",
-        );
-    } finally {
-      if (generation === this.generation) {
-        this.inFlight = null;
-        if (this.pendingRemote !== undefined) {
-          const pending = this.pendingRemote;
-          this.pendingRemote = undefined;
-          await this.receive(pending, generation);
+      await withInventoryWriteLock(accountKey(uid), () => {
+        if (!this.writable(uid, generation)) return;
+        if (error.code === "sync/conflict" && upload && this.record.revision > upload.record.revision &&
+            error.remote?.revision <= this.record.revision) {
+          this.signal(this.record.dirty ? "pending" : "synced",
+            this.record.dirty ? "New changes waiting to sync" : "Account is up to date");
+        } else if (error.code === "sync/conflict") {
+          this.conflictRecord = error.remote;
+          this.signal("conflict", "Another device saved changes first. Choose which version to keep.");
+        } else {
+          this.signal("error", error.message || "Sync failed. Your changes are saved on this device.");
         }
+      }).catch((failure) => this.reportLockFailure(uid, generation, failure));
+    } finally {
+      // Release pauseForDeletion even if auth changed while the upload settled.
+      upload?.finish();
+      let pending;
+      if (upload) await withInventoryWriteLock(accountKey(uid), () => {
+        if (!this.currentScope(uid, generation) || this.inFlight !== upload.pending) return;
+        this.inFlight = null;
+        pending = this.pendingRemote;
+        this.pendingRemote = undefined;
         if (this.record?.dirty && this.status === "pending") this.schedule();
-      }
+      }).catch((failure) => {
+        if (this.currentScope(uid, generation) && this.inFlight === upload.pending) {
+          this.inFlight = null;
+          this.pendingRemote = undefined;
+        }
+        this.reportLockFailure(uid, generation, failure);
+      });
+      if (pending !== undefined) await this.receive(pending, generation);
     }
   }
   retry() {
@@ -292,29 +334,53 @@ export class AccountSync {
     if (generation === this.generation) this.inFlight = null;
   }
   async resolve(choice) {
-    if (this.status !== "conflict") return;
-    if (!this.ensureCurrentCache() || this.status !== "conflict") return;
-    // Preserve the rejected local version before either conflict resolution choice.
-    this.storage.setItem(
-      `haven-recovery:${this.uid}`,
-      JSON.stringify(this.record.inventory),
-    );
-    if (choice === "local") {
-      this.record = {
-        ...this.record,
-        revision: this.conflictRecord?.revision || 0,
-        dirty: true,
-      };
-      this.cache();
-      this.signal("pending", "Saving your chosen version…");
-      await this.flush();
-    } else {
-      this.record = { ...this.record, dirty: false };
-      await this.receive(this.conflictRecord);
-      if (this.status === "error") {
-        this.record = { ...this.record, dirty: true };
-        this.cache();
-      }
+    const uid = this.uid, generation = this.generation;
+    if (!uid) return;
+    let resolution;
+    try {
+      resolution = await withInventoryWriteLock(accountKey(uid), () => {
+        if (!this.currentScope(uid, generation) || this.status !== "conflict" ||
+            !this.writable(uid, generation) || this.status !== "conflict") return;
+        // Preserve the rejected local inventory before either choice, under the
+        // same account lock, so a stale resolver cannot overwrite recovery data.
+        this.storage.setItem(`haven-recovery:${uid}`, JSON.stringify(this.record.inventory));
+        if (choice === "local") {
+          const next = { ...this.record, revision: this.conflictRecord?.revision || 0, dirty: true };
+          // Keep baseAssets: the rejected version may still reference files that
+          // are needed until the replacement has been accepted by the server.
+          this.cache(next, uid);
+          this.record = next;
+          this.signal("pending", "Saving your chosen version...");
+          return { local: true };
+        }
+        const pending = { remote: this.conflictRecord, edit: this.edit, sequence: ++this.readSequence };
+        this.signal("connecting", "Loading your chosen account inventory...");
+        return pending;
+      });
+      if (!resolution || !this.currentScope(uid, generation)) return;
+      if (resolution.local) { await this.flush(); return; }
+      const inventory = resolution.remote ? await this.remote.read(uid, resolution.remote) : initialState();
+      await withInventoryWriteLock(accountKey(uid), () => {
+        if (!this.writable(uid, generation) || resolution.sequence !== this.readSequence) return;
+        if (resolution.edit !== this.edit || this.conflictRecord !== resolution.remote) {
+          this.signal("conflict", "Local and account changes need your review.");
+          return;
+        }
+        if (!validState(inventory))
+          throw Error("The account inventory could not be read. Your local copy is unchanged.");
+        const revision = resolution.remote?.revision || 0;
+        if (revision < this.record.revision) return;
+        const next = { inventory, revision, dirty: false };
+        this.cache(next, uid);
+        this.record = next;
+        this.replace(inventory, uid);
+        this.signal("synced", "Account is up to date");
+      });
+    } catch (error) {
+      await withInventoryWriteLock(accountKey(uid), () => {
+        if (this.writable(uid, generation) && (!resolution || resolution.sequence === this.readSequence))
+          this.signal("error", error.message || "Could not resolve your account changes.");
+      }).catch((failure) => this.reportLockFailure(uid, generation, failure));
     }
   }
 }

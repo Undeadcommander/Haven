@@ -5,6 +5,18 @@ import { initialState } from '../src/store.js';
 import { addHouse, inventoryForHouse, replaceHouseInventory } from '../src/houses.js';
 import { removeLocation } from '../src/inventory-delete.js';
 
+function startedCall(object, method) {
+  const original = object[method];
+  let started;
+  const pending = new Promise((resolve) => { started = resolve; });
+  object[method] = function (...args) {
+    object[method] = original;
+    started();
+    return original.apply(this, args);
+  };
+  return pending;
+}
+
 // Shared storage deliberately dispatches no events: saveLocal must protect itself.
 function setup() {
   const values = new Map();
@@ -20,9 +32,9 @@ test('account deletion cannot overwrite a sibling save before its storage event 
   try {
     await first.select('audit'); await second.select('audit');
     const staleDelete = removeLocation(second.record.inventory,'bathroom');
-    first.saveLocal({...first.record.inventory,items:[{id:'new',name:'Sibling item',notes:'',locationId:'garage'}]});
+    await first.saveLocal({...first.record.inventory,items:[{id:'new',name:'Sibling item',notes:'',locationId:'garage'}]});
     const sibling = storage.getItem(accountKey('audit'));
-    assert.throws(() => second.saveLocal(staleDelete),/another tab/);
+    await assert.rejects(() => second.saveLocal(staleDelete),/another tab/);
     assert.equal(storage.getItem(accountKey('audit')),sibling);
     assert.equal(second.status,'stale');
   } finally { await first.select(null); await second.select(null); }
@@ -34,10 +46,12 @@ test('pending old-account publish cannot overwrite a switched account',async () 
   sync.remote.publish = () => new Promise(resolve => finish=resolve);
   try {
     await sync.select('alice'); await sync.receive(null);
-    sync.saveLocal(removeLocation(sync.record.inventory,'bathroom'));
+    await sync.saveLocal(removeLocation(sync.record.inventory,'bathroom'));
+    const publishing = startedCall(sync.remote, "publish");
     const pending = sync.flush();
+    await publishing;
     await sync.select('bob');
-    sync.saveLocal({...initialState(),items:[{id:'bob',name:'Bob keys',notes:'',locationId:'garage'}]});
+    await sync.saveLocal({...initialState(),items:[{id:'bob',name:'Bob keys',notes:'',locationId:'garage'}]});
     const bob = storage.getItem(accountKey('bob'));
     finish(1); await pending;
     assert.equal(storage.getItem(accountKey('bob')),bob);

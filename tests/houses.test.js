@@ -178,7 +178,7 @@ test("cloud chunks and account caches retain the full collection and inactive as
   });
   await sync.select("alice");
   await sync.receive(null);
-  sync.saveLocal(inventory);
+  await sync.saveLocal(inventory);
   await sync.flush();
   assert.deepEqual([...sync.retainedAssetIds].sort(), ["home-asset", "lake-asset"]);
   assert.deepEqual(JSON.parse(storage.getItem(accountKey("alice"))).inventory, inventory);

@@ -58,6 +58,7 @@ test("gear edits container details and destination without entering it, and item
   await page.getByRole("radio", { name: "blue" }).check();
   await page.getByRole("combobox", { name: "Location", exact: true }).selectOption("cabinet");
   await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.locator("#editor")).toBeHidden();
   await page.reload();
   await page.getByRole("button", { name: /All items/ }).click();
   await expect(page.locator("#item-keys")).toHaveClass(/blue/);
