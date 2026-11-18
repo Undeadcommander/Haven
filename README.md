@@ -18,19 +18,13 @@ To delete a house, switch to it and choose **Delete house** in the house picker 
 
 If guest inventory cannot be loaded, ordinary edits are blocked rather than replacing the saved value with sample data. Export saves the original raw metadata as a `haven-raw-recovery-*.json` file; it is not a full scan backup and may need repair before restoring. Reload retries loading, and an explicit, confirmed restore can replace the unreadable value. Browser history remembers house context, and existing room links select the house that owns the room.
 
+<img width="506" height="383" alt="image" src="https://github.com/user-attachments/assets/8ad223e5-4a6c-42bc-94da-9089e9d264d3" />
+
 ## Storage and performance
 
 Inventory and marker metadata are stored in this browser's localStorage; binary scans are stored in IndexedDB, on this site's origin. Optional Google accounts sync inventory and scan markers. Guest mode stays local. Export JSON backups from the sidebar (or footer on mobile); restoring replaces the current inventory after confirmation. Clearing browser data removes the inventory. Storage failures are reported and changes are not silently accepted.
 
 The 3D viewer uses Three.js, loaded only when a scan is opened. Room scanning needs no external scanning service or remote fonts. 3D scans from the webpage requires a device that supports OpenXR. 
-
-## GitHub Pages
-
-The `Deploy Haven to GitHub Pages` workflow builds and deploys every push to `main`.
-The production build uses `/Haven/` as its asset base path.
-In repository **Settings → Pages**, set **Source** to **GitHub Actions** once.
-The deployment URL is `https://undeadcommander.github.io/Haven/` after a successful Pages deployment.
-Inventory saved on a local preview does not automatically transfer to this URL; export and restore a backup to move it.
 
 ## Themes and moving items
 
