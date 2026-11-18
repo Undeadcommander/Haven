@@ -62,19 +62,10 @@ Malformed geometry indices and non-finite marker coordinates are rejected before
 
 Validation includes GLB and OBJ loading, mouse/touch placement, linking existing targets, container navigation, transfer cleanup, IndexedDB persistence, full backup restore, unsupported camera handling, and simulated WebXR capture. Physical depth capture has not been verified on real AR hardware in this cloud environment.
 
-
 ## Google sign-in and account sync
 
-See [Firebase account setup](firebase/SETUP.md). The integration requires a real Firebase project with Google Authentication, Firestore, and private access rules. The public configuration is in `src/firebase-config.json`; it now contains the public configuration for `sign-in-for-haven`. Authentication, Firestore setup, and rules must also be enabled in that project. Never commit a service-account key.
-
 Use **Sign in → Continue with Google** to create or access an account. Existing guest data is copied only through the explicit **Copy device inventory to account** action. If a copy fails before its inventory is saved, its staged scan files are removed. Account status reports pending, saving, saved, failed, and conflicting changes. Each account has a separate local cache; scan files remain on the originating device and can be transferred through backups.
-
-Sync acknowledgments and safe cache-only updates with unchanged inventory do not interrupt editing; accepted acknowledgments advance the local sync revision before the next save. If another tab actually changes the inventory, editing and background sync pause and ask you to reload. Queued changes, delayed downloads, and old upload acknowledgments cannot replace a newer tab’s pending cache or discard its retained scan files.
-
-Inventory writes are serialized per guest or account storage key. The saved snapshot is checked inside the same lock as the write, so competing tabs cannot both pass a stale check and overwrite one another. Saves finish before dialogs close; cancellation or a scope change while waiting for the lock cancels the pending write. Web Locks are used where available, with an IndexedDB transaction mutex as the browser fallback.
 
 ### Account deletion
 
 Deletion requires a fresh Google verification and removes the Haven authentication account, all Firestore inventory chunks (including older snapshots), the profile, and that account's local cache, recovery copy, and scan files on this browser. The Google account, separate guest inventory, other accounts, downloaded backups, and local copies on other devices are not deleted.
-
-Sync pauses before deletion and waits for any submitted upload to settle. A temporary Firestore revision marker tells active clients to pause too. If cleanup fails, authentication is retained until cloud cleanup succeeds, and the deletion remains paused across reloads; use **Delete account** again to finish. This is a client-driven flow, so keep the page open until it completes.
