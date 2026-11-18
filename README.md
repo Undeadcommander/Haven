@@ -1,7 +1,7 @@
 # Haven 
 
 A lightweight home inventory app. Start with a living room, garage, and bathroom, add rooms and nested containers, and record exactly where each item belongs. Search by item name, notes, or location; a result opens and highlights the item in its container.
-
+<img width="2549" height="1352" alt="image" src="https://github.com/user-attachments/assets/6b31e5f2-07ca-4c4c-a894-7201c2567548" />
 ## Multiple houses
 
 Run `npm run audit:house-deletion` for repeatable house-deletion performance and memory checks. Add `-- --depth=160` for the deep nesting stress fixture, or `-- --retention` for a focused dialog-retention probe. Reports are written to `test-results/audit/house-deletion.md` and `house-deletion-retention.md`, alongside raw JSON samples. These checks use isolated synthetic inventory and mocked or disabled account services.
@@ -31,7 +31,6 @@ The production build uses `/Haven/` as its asset base path.
 In repository **Settings → Pages**, set **Source** to **GitHub Actions** once.
 The deployment URL is `https://undeadcommander.github.io/Haven/` after a successful Pages deployment.
 Inventory saved on a local preview does not automatically transfer to this URL; export and restore a backup to move it.
-
 
 ## Themes and moving items
 
