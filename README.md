@@ -38,6 +38,9 @@ With a mouse, drag a container card or item row onto another container, a room c
 
 All items, nested containers, and their scans move together. Pins in scans outside the moved container are cleared because they describe its old position; pins in its own scans are preserved. Moving an item clears that item's scan pins. Item colors are saved with the inventory and included in backups and account sync; older inventories without item colors remain supported.
 
+<img width="2544" height="1351" alt="image" src="https://github.com/user-attachments/assets/2da3cd66-d7bb-4a80-85a3-20e73f823655" />
+
+
 ## 3D room scans
 
 Open a room or container and choose **Add 3D scan**.
