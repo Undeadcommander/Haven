@@ -2,29 +2,6 @@
 
 A lightweight home inventory app. Start with a living room, garage, and bathroom, add rooms and nested containers, and record exactly where each item belongs. Search by item name, notes, or location; a result opens and highlights the item in its container.
 
-## Development - users ignore this and Checks
-
-Requires Node.js 20.19+ or 22.12+ (validated with Node 24).
-
-```sh
-npm ci
-npm run dev
-```
-
-Vite serves the app on port 5173. `npm run build` produces the static site in `dist/`; `npm run preview` serves that build. Deploy `dist/` to any static host. Hash-based navigation needs no server rewrite rules.
-
-## Checks
-
-```sh
-npm test
-npm run build
-npm run test:e2e
-```
-
-Browser tests start the dev server automatically (or reuse a running local server). Locally they use `/usr/bin/chromium`; CI installs Playwright Chromium. Set `CHROMIUM_PATH` to another Chromium executable if needed. Tests cover nested containers, search, reload persistence, editing, deletion, backup restore, and mobile overflow.
-
-The `audit:baseline`, `audit:bugs`, `audit:performance`, `audit:ram`, and `audit:leaks` npm scripts provide repeatable regression and resource checks. Browser audit scripts start isolated, headless sessions, disable Firebase, block external requests, and serialize measurements with a lock. Set `CHROMIUM_PATH` for your browser; the resource scripts default to Windows Edge. The RAM audit uses Windows process counters. Results and heap snapshots go to ignored `test-results/audit/`; timing and memory figures are environment-specific, not universal pass thresholds. See `TEST_AUDIT_REPORT.md` for the measured audit and remaining limitations.
-
 ## Multiple houses
 
 Run `npm run audit:house-deletion` for repeatable house-deletion performance and memory checks. Add `-- --depth=160` for the deep nesting stress fixture, or `-- --retention` for a focused dialog-retention probe. Reports are written to `test-results/audit/house-deletion.md` and `house-deletion-retention.md`, alongside raw JSON samples. These checks use isolated synthetic inventory and mocked or disabled account services.
